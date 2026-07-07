@@ -35,15 +35,31 @@
       if (confirm("Reset all reviewed progress?")) window.Progress.reset();
     });
 
-    // pick initial framework: hash > last visited > first
-    let start = (location.hash || "").slice(1);
+    // pick initial framework: hash > last visited > first.
+    // hash may be a framework id ("#fastapi") or a deep section anchor ("#fastapi--routing").
+    const raw = (location.hash || "").slice(1);
+    let sectionAnchor = null;
+    let start = raw;
+    if (raw.indexOf("--") !== -1) { sectionAnchor = raw; start = raw.split("--")[0]; }
     if (!start || !fws.find((f) => f.id === start)) {
+      sectionAnchor = null;
       try { start = localStorage.getItem("fwdeck.last"); } catch (e) {}
     }
     if (!start || !fws.find((f) => f.id === start)) start = fws[0].id;
 
     window.Nav.select(start, false);
     window.Progress.refreshUI();
+
+    // scroll to a deep-linked section once it has rendered
+    if (sectionAnchor) {
+      setTimeout(() => {
+        const target = document.getElementById(sectionAnchor);
+        if (target) {
+          if (target.tagName === "DETAILS") target.open = true;
+          target.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      }, 160);
+    }
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);

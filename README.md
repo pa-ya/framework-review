@@ -33,9 +33,13 @@ open index.html          # macOS
 
 - 🌗 **Dark / light theme** — toggle with `t`, remembered across visits (respects your OS setting first time).
 - 🔎 **Global search** (`/`) — jump to any concept across all frameworks.
-- ✅ **Progress tracking** — mark sections *Reviewed*; the sidebar ring shows overall coverage (saved locally).
+- ✅ **Progress tracking** — mark sections *Reviewed*; the sidebar ring (gradient) shows overall coverage (saved locally).
 - 🃏 **Flashcards + quiz** (`f`) — active-recall practice per framework.
-- 🧭 **Sticky nav + on-this-page TOC** with scroll-spy.
+- 🧭 **Sticky nav + on-this-page TOC** with scroll-spy; the active item is kept in view and its group auto-expands.
+- 📊 **Reading-progress bar** under the top bar, plus a **back-to-top** button (or press `g` `g`).
+- ↔ **Prev / Next framework** cards at the foot of every page for linear review.
+- 🔗 **Copyable section links** — click a section's number to copy a deep link (`…#fastapi--routing`) that reopens straight to it.
+- ⌨ **Keyboard-shortcut overlay** — press `?` (or the `?` button) for the full list.
 - ▸ **Deep-dive accordions** — advanced details are collapsed by default; open only what you need.
 - 📋 Syntax-highlighted code with **copy** buttons.
 - 🖨 **Print-friendly** (Ctrl/Cmd+P expands everything for PDF export).
@@ -48,6 +52,8 @@ open index.html          # macOS
 | `j` / `k` | Next / previous framework |
 | `f` | Open flashcards |
 | `t` | Toggle theme |
+| `?` | Keyboard-shortcut help |
+| `g` `g` | Back to top |
 | `Esc` | Close modal / menu |
 
 ## Project structure
@@ -55,7 +61,7 @@ open index.html          # macOS
 ```
 index.html            # shell (loads everything)
 css/                  # theme (dark/light tokens), layout, components, animations
-js/                   # highlight, render, nav, search, progress, flashcards, theme, app
+js/                   # highlight, render, nav, search, progress, flashcards, theme, ux, app
 content/              # one file per framework (window.FRAMEWORKS.push({...}))
   _schema.md          # authoring guide for the content object
 TASK.md               # full plan / spec

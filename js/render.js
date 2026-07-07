@@ -194,6 +194,34 @@
     return card;
   }
 
+  // Prev / Next framework navigation (linear, wraps around — matches j/k order)
+  function fwNavFooter(fw) {
+    const list = window.FRAMEWORKS || [];
+    const idx = list.findIndex((f) => f.id === fw.id);
+    if (idx < 0 || list.length < 2) return null;
+    const prev = list[(idx - 1 + list.length) % list.length];
+    const next = list[(idx + 1) % list.length];
+    const nav = el("nav", "fw-nav");
+    nav.setAttribute("aria-label", "Framework navigation");
+
+    function card(target, dir) {
+      const c = el("button", "fw-nav-card " + dir);
+      c.style.setProperty("--fw-color", target.color || "var(--accent)");
+      const arrow = `<span class="fw-nav-arrow">${dir === "prev" ? "←" : "→"}</span>`;
+      const meta =
+        `<span>` +
+        `<span class="fw-nav-dir">${dir === "prev" ? "Previous" : "Next"}</span><br>` +
+        `<span class="fw-nav-name"><span class="dot"></span>${target.name}</span>` +
+        `</span>`;
+      c.innerHTML = dir === "prev" ? arrow + meta : meta + arrow;
+      c.addEventListener("click", () => window.Nav && window.Nav.select(target.id));
+      return c;
+    }
+    nav.appendChild(card(prev, "prev"));
+    nav.appendChild(card(next, "next"));
+    return nav;
+  }
+
   // Render a whole framework into #content, return list of TOC entries
   function renderFramework(fw) {
     const root = document.getElementById("content");
@@ -211,6 +239,8 @@
     const pk = packagesCard(fw); if (pk) { pk.id = `${fw.id}--packages`; root.appendChild(pk); toc.push({ id: pk.id, title: "Packages" }); }
     const ch = cheatCard(fw);    if (ch) { ch.id = `${fw.id}--cheat`; root.appendChild(ch); toc.push({ id: ch.id, title: "Cheat card" }); }
     const gc = gotchaCard(fw);   if (gc) { gc.id = `${fw.id}--gotchas`; root.appendChild(gc); toc.push({ id: gc.id, title: "Gotchas" }); }
+
+    const fn = fwNavFooter(fw);  if (fn) root.appendChild(fn);
 
     return toc;
   }

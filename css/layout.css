@@ -78,7 +78,7 @@
 .progress-ring svg { transform: rotate(-90deg); }
 .ring-bg { fill: none; stroke: var(--border); stroke-width: 7; }
 .ring-fg {
-  fill: none; stroke: url(#ringGrad); stroke: var(--accent); stroke-width: 7; stroke-linecap: round;
+  fill: none; stroke: var(--accent); stroke: url(#ringGrad); stroke-width: 7; stroke-linecap: round;
   stroke-dasharray: 213.6; stroke-dashoffset: 213.6;
   transition: stroke-dashoffset var(--slow) var(--ease-out);
 }

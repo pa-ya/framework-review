@@ -35,7 +35,7 @@
           "Some modules are **GPL-only** for open-source users (e.g. Qt Charts, Data Visualization, Virtual Keyboard, Wayland Compositor) — using them under open source forces your app to GPL.",
           "**Commercial** license removes LGPL/GPL obligations (static linking, no relinking clause) and is required for many embedded/proprietary scenarios."
         ] },
-        { type: "callout", variant: "note", text: "This guide targets **Qt 6** (current series is 6.11, March 2026; **6.8/6.9 are the LTS** releases). Qt 6 requires a **C++17** compiler and uses **CMake** as the recommended build system." }
+        { type: "callout", variant: "note", text: "This guide targets **Qt 6** (current series is 6.11, March 2026). The **LTS** releases are **6.2, 6.5, 6.8 and 6.11** — 6.9 and 6.10 are regular (non-LTS) releases, so prefer an LTS for long-lived projects. Qt 6 requires a **C++17** compiler and uses **CMake** as the recommended build system." }
       ]
     },
     {
@@ -138,7 +138,7 @@
           ["`QSet<T>`", "Hash-based set."]
         ] },
         { type: "code", lang: "cpp", code: "QList<int> xs{1, 2, 3};\nxs.append(4);\nfor (int x : xs) use(x);\n\nQHash<QString, int> ages;\nages[\"Ada\"] = 36;\nif (ages.contains(\"Ada\")) qDebug() << ages.value(\"Ada\");\n\n// qDebug() is Qt's stream logger; knows how to print Qt types\nqDebug() << \"list=\" << xs << \"map=\" << ages;" },
-        { type: "callout", variant: "warn", text: "Implicit sharing means calling a **non-const** method (or `operator[]`) can trigger a deep copy (a *detach*). Iterating with a mutable iterator, or `for (auto &x : list)`, detaches. This is safe but can be a hidden cost in hot loops — use `const` access (`qAsConst`/`std::as_const`) when you only read." }
+        { type: "callout", variant: "warn", text: "Implicit sharing means calling a **non-const** method (or `operator[]`) can trigger a deep copy (a *detach*). Iterating with a mutable iterator, or `for (auto &x : list)`, detaches. This is safe but can be a hidden cost in hot loops — use `const` access (`std::as_const`; the old `qAsConst` is deprecated since 6.6) when you only read." }
       ]
     },
     {
@@ -260,7 +260,7 @@
         { type: "code", lang: "cpp", code: "#include <QJsonDocument>\n#include <QJsonObject>\n\n// parse\nQJsonDocument doc = QJsonDocument::fromJson(bytes);\nQJsonObject root = doc.object();\nQString name = root[\"name\"].toString();\nint age = root[\"age\"].toInt();\n\n// build\nQJsonObject obj{ {\"name\", \"Ada\"}, {\"age\", 36} };\nQByteArray out = QJsonDocument(obj).toJson(QJsonDocument::Compact);" },
         { type: "heading", text: "Resources (.qrc)" },
         { type: "p", text: "Bundle assets (icons, `.qml`, translations, JSON) *into the binary* with a resource file, referenced by the `:/` prefix — no loose files to ship or lose." },
-        { type: "code", lang: "json", code: "<!-- resources.qrc -->\n<RCC>\n  <qresource prefix=\"/\">\n    <file>icons/open.svg</file>\n    <file>ui/main.qml</file>\n  </qresource>\n</RCC>\n<!-- use as:  QIcon(\":/icons/open.svg\")  -->" },
+        { type: "code", lang: "xml", code: "<!-- resources.qrc -->\n<RCC>\n  <qresource prefix=\"/\">\n    <file>icons/open.svg</file>\n    <file>ui/main.qml</file>\n  </qresource>\n</RCC>\n<!-- use as:  QIcon(\":/icons/open.svg\")  -->" },
         { type: "heading", text: "QSettings" },
         { type: "p", text: "`QSettings` stores app preferences in the platform-native store (registry on Windows, plist on macOS, INI on Linux) with no path handling on your part." },
         { type: "code", lang: "cpp", code: "QCoreApplication::setOrganizationName(\"Acme\");\nQCoreApplication::setApplicationName(\"MyApp\");\n\nQSettings s;\ns.setValue(\"window/geometry\", saveGeometry());\ns.setValue(\"user/theme\", \"dark\");\n// ...next launch:\nrestoreGeometry(s.value(\"window/geometry\").toByteArray());\nQString theme = s.value(\"user/theme\", \"light\").toString();  // with default" },

@@ -96,6 +96,16 @@
     if (activeItem) {
       const grp = activeItem.closest(".nav-group");
       if (grp) grp.classList.add("is-open");
+      // scroll the sidebar (only) so the active item stays visible
+      requestAnimationFrame(() => {
+        const sidebar = document.getElementById("sidebar");
+        if (!sidebar) return;
+        const ir = activeItem.getBoundingClientRect();
+        const sr = sidebar.getBoundingClientRect();
+        if (ir.top < sr.top + 8 || ir.bottom > sr.bottom - 8) {
+          sidebar.scrollTop += (ir.top - sr.top) - sr.height / 2 + ir.height / 2;
+        }
+      });
     }
 
     const content = document.getElementById("content");
@@ -106,8 +116,8 @@
       window.Progress && window.Progress.refreshUI();
       setupScrollSpy();
       content.classList.remove("switching");
-      document.getElementById("main").scrollTo({ top: 0 });
       window.scrollTo({ top: 0, behavior: "auto" });
+      window.UX && window.UX.refresh();
     }, 90);
 
     if (push !== false) {

@@ -382,3 +382,20 @@ framework fits. Examples to include:
 - [x] New content: **Go Standard Library** (net/http, 1.22 ServeMux, slog), **Rust Anchor** (Solana), **Qt** (C++), **Drogon** (C++).
 - [x] Sidebar: collapsible **grouped nav** — Go (Standard Library / chi / Echo), Rust (Axum / Anchor), C++ (Qt / Drogon); auto-expands the active group.
 - [x] Re-validated all 14 content files (0 structural errors) + browser-verified new sections and grouping.
+
+## Round 3 — polish pass, UX features, second accuracy review
+
+- [x] Full engine review (render/nav/app/search/progress/flashcards/theme/highlight/ux) — no bugs or conflicts found; structural validation stays at **0 errors** (2 warnings are verified-literal `${` in text).
+- [x] Second technical-accuracy pass (parallel expert review) with concrete fixes:
+  - Qt: corrected the **LTS claim** (LTS = 6.2/6.5/6.8/6.11; 6.9–6.10 are regular releases — was inverted); noted **`qAsConst` deprecated since 6.6** (use `std::as_const`); retagged the `.qrc` block `xml` (was `json`).
+  - Go stdlib: fixed an **inverted URL-decoding claim** — ServeMux **does** unescape path segments, so `PathValue` returns decoded values.
+  - Anchor: bumped the stale **Anza `solana-cli` version** to the current `4.x` line.
+  - Drogon: verified accurate, no changes.
+- [x] New UX features (new file `js/ux.js`):
+  - **Reading-progress bar** under the top bar + **back-to-top** button (also `g` `g`).
+  - **Prev / Next framework** cards at the foot of every page (wrap around, color-tinted; render.js).
+  - **Copyable section deep links** — click a section number to copy `…#fw--section`; app.js resolves these anchors on load.
+  - **Keyboard-shortcut overlay** (`?` key / `?` button) listing all shortcuts.
+  - Sidebar **auto-scrolls the active item into view** on switch (sidebar only, never the page).
+- [x] Style polish: gradient **progress ring** (real SVG gradient), **hero top accent bar** in the framework color, distinct **note callout** color, hover states on package cards.
+- [x] Print CSS updated to hide the new chrome; all new JS syntax-checked; browser-verified (boot, groups=3, deep-links, footer wrap, accent bar, note styling).

@@ -50,7 +50,7 @@
         ] },
         { type: "p", text: "**Precedence** was simplified to two rules: a pattern with a **host** wins over one without, and a more **specific** (method, path) pattern wins over a less specific one — regardless of registration order. `/items/latest` beats `/items/{id}`." },
         { type: "callout", variant: "gotcha", text: "Registering `GET` also registers `HEAD` automatically. Two patterns that overlap but neither is more specific (e.g. `/a/{x}/c` vs `/a/b/{y}`) cause a **panic at registration** — that's intentional, it catches ambiguous routes at startup." },
-        { type: "callout", variant: "warn", text: "`PathValue` returns `\"\"` for an unknown wildcard name — a typo silently gives you an empty string, not an error. And wildcard values are **not** URL-decoded the way query params are; `{id}` gives the raw segment (path-escaped)." },
+        { type: "callout", variant: "warn", text: "`PathValue` returns `\"\"` for an unknown wildcard name — a typo silently gives you an empty string, not an error. Wildcard values **are** URL-decoded: ServeMux unescapes each path segment, so `{id}` gives you the decoded value (an encoded `%2F` inside a segment is kept as a literal slash rather than splitting into a new segment)." },
         { type: "link", url: "https://go.dev/blog/routing-enhancements", text: "The Go blog — Routing Enhancements for Go 1.22 (authoritative)" }
       ]
     },
