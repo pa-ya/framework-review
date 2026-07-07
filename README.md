@@ -6,14 +6,15 @@ ORMs, auth, and gotchas. Most sections are a 10–20 minute read (Qt is longer b
 
 **Sections:**
 
-- **FastAPI** (Python) · **NestJS** (TypeScript)
+- **Python** — FastAPI · Django · Flask
+- **NestJS** (TypeScript)
 - **Go** — Standard Library (net/http) · chi · Echo
-- **Rust** — Axum · Anchor (Solana on-chain programs)
-- **ElysiaJS** (Bun) · **Next.js** · **Django** · **Laravel**
+- **Rust** — Axum · Anchor (Solana on-chain programs) · Leptos (fullstack reactive)
+- **ElysiaJS** (Bun) · **Next.js** · **Laravel**
 - **C++** — Qt · Drogon
 - **Practice & Projects** — cross-framework comparison + project ideas
 
-Related sections are grouped in the sidebar under a collapsible parent (**Go**, **Rust**, **C++**).
+Related sections are grouped in the sidebar under a collapsible parent (**Python**, **Go**, **Rust**, **C++**).
 
 ## Run it
 

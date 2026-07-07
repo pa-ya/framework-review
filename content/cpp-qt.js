@@ -228,6 +228,23 @@
       ]
     },
     {
+      id: "painting",
+      title: "Custom painting, Graphics View & animation",
+      level: "core",
+      body: [
+        { type: "p", text: "When no widget does what you need, you **draw it yourself** with **`QPainter`** — Qt's 2D vector painting API. You paint inside `paintEvent()`, using a **pen** (outlines), a **brush** (fills) and a coordinate system you can translate/rotate/scale. The same `QPainter` code targets any **paint device**: a widget, a `QImage`/`QPixmap` (off-screen), an SVG, or a `QPdfWriter` — so \"draw to screen\" and \"export to PDF\" share one code path." },
+        { type: "code", lang: "cpp", code: "void Chart::paintEvent(QPaintEvent *) {\n    QPainter p(this);\n    p.setRenderHint(QPainter::Antialiasing);          // smooth edges\n    p.fillRect(rect(), Qt::white);\n\n    p.setPen(QPen(Qt::darkBlue, 2));                  // outline\n    p.setBrush(QColor(80, 140, 255, 120));            // semi-transparent fill\n    p.drawRoundedRect(QRectF(20, 20, 160, 90), 8, 8);\n\n    p.translate(width() / 2.0, height() / 2.0);       // move the origin\n    p.rotate(15);                                     // then rotate everything\n    p.drawText(0, 0, tr(\"Hello\"));\n\n    QPainterPath path;                                // arbitrary shapes/curves\n    path.moveTo(0, 0); path.cubicTo(40, -60, 120, 60, 160, 0);\n    p.strokePath(path, QPen(Qt::red, 3));\n}   // painter auto-ends when it goes out of scope" },
+        { type: "callout", variant: "gotcha", text: "Rules of painting: only paint inside `paintEvent()` (or onto an off-screen `QImage`); never call `paintEvent()` yourself — call **`update()`** to request a repaint. Heavy drawing? Render once into a `QPixmap` and blit it, rather than recomputing every frame." },
+        { type: "heading", text: "Graphics View: many interactive items" },
+        { type: "p", text: "For **hundreds/thousands of movable, selectable 2D objects** (diagram editors, node graphs, games, CAD), don't hand-paint — use the **Graphics View** framework: a `QGraphicsScene` holds `QGraphicsItem`s (rect, ellipse, pixmap, text, or your own), and one or more `QGraphicsView`s display and let the user zoom/pan/drag them. The scene handles hit-testing, selection and z-order for you." },
+        { type: "code", lang: "cpp", code: "auto *scene = new QGraphicsScene(this);\nauto *rect = scene->addRect(0, 0, 80, 40, QPen(Qt::black), QBrush(Qt::yellow));\nrect->setFlag(QGraphicsItem::ItemIsMovable);      // user can drag it\nrect->setFlag(QGraphicsItem::ItemIsSelectable);\nscene->addText(\"node\")->setPos(10, 10);\n\nauto *view = new QGraphicsView(scene);\nview->setRenderHint(QPainter::Antialiasing);\nview->setDragMode(QGraphicsView::RubberBandDrag); // marquee-select" },
+        { type: "heading", text: "The animation framework" },
+        { type: "p", text: "**`QPropertyAnimation`** smoothly interpolates any `Q_PROPERTY` over time — position, size, opacity, color — driven by the event loop. Compose them with `QSequentialAnimationGroup` / `QParallelAnimationGroup`, and shape the motion with an **easing curve**." },
+        { type: "code", lang: "cpp", code: "auto *anim = new QPropertyAnimation(button, \"geometry\");\nanim->setDuration(400);\nanim->setStartValue(QRect(0, 0, 100, 30));\nanim->setEndValue(QRect(200, 0, 100, 30));\nanim->setEasingCurve(QEasingCurve::OutBack);\nanim->start(QAbstractAnimation::DeleteWhenStopped);\n\n// fade a widget via a graphics effect + animated 'opacity' property\nauto *fx = new QGraphicsOpacityEffect(panel);\npanel->setGraphicsEffect(fx);\nauto *fade = new QPropertyAnimation(fx, \"opacity\");\nfade->setDuration(250); fade->setStartValue(0.0); fade->setEndValue(1.0);\nfade->start(QAbstractAnimation::DeleteWhenStopped);" },
+        { type: "callout", variant: "note", text: "This is *why* `Q_PROPERTY` matters beyond QML: because the meta-object exposes properties by name, the animation system can drive them generically. Anything you make a bindable property becomes animatable for free. For richer motion-heavy UIs, QML's declarative animations (next section) are usually easier." }
+      ]
+    },
+    {
       id: "model-view",
       title: "Model/View architecture",
       level: "core",
@@ -327,6 +344,37 @@
         { type: "code", lang: "cpp", code: "// main.cpp: load QML from the engine\n#include <QGuiApplication>\n#include <QQmlApplicationEngine>\n\nint main(int argc, char **argv) {\n    QGuiApplication app(argc, argv);\n    QQmlApplicationEngine engine;\n    engine.loadFromModule(\"MyApp\", \"Main\");   // Main.qml in the module\n    return app.exec();\n}" },
         { type: "callout", variant: "note", text: "The older bridge — `engine.rootContext()->setContextProperty(\"backend\", &obj)` and `qmlRegisterType<Backend>(\"MyApp\", 1, 0, \"Backend\")` — still works, but `QML_ELEMENT` + `qt_add_qml_module` is now preferred (better tooling, type checking, and QML compilation)." },
         { type: "link", url: "https://doc.qt.io/qt-6/qtqml-cppintegration-overview.html", text: "Qt docs — QML & C++ integration overview" }
+      ]
+    },
+    {
+      id: "qml-depth",
+      title: "QML in depth: layout, lists, states & animation",
+      level: "core",
+      body: [
+        { type: "p", text: "The previous section covered the C++ bridge; this is the QML you actually write. Four things carry most real UIs: **positioning** items, showing **lists** from a model, describing **states**, and **animating** between them." },
+        { type: "heading", text: "Positioning: anchors, positioners & Layouts" },
+        { type: "p", text: "QML has three ways to place items, used together:" },
+        { type: "list", items: [
+          "**Anchors** — glue an item's edges to another's: `anchors.fill: parent`, `anchors.centerIn: parent`, `anchors.top: header.bottom`. Best for relative positioning and margins.",
+          "**Positioners** — `Row`, `Column`, `Grid`, `Flow` auto-arrange their children in sequence with `spacing`. Simple and cheap; children don't resize.",
+          "**Qt Quick Layouts** — `RowLayout`, `ColumnLayout`, `GridLayout` (from `import QtQuick.Layouts`) *resize* children via attached props like `Layout.fillWidth: true`, `Layout.preferredHeight`, `Layout.columnSpan`. This is the analog of Widgets' `QHBoxLayout`."
+        ] },
+        { type: "code", lang: "qml", code: "import QtQuick\nimport QtQuick.Controls\nimport QtQuick.Layouts\n\nColumnLayout {\n    anchors.fill: parent\n    spacing: 8\n    Label { text: \"Title\"; Layout.alignment: Qt.AlignHCenter }\n    RowLayout {\n        Layout.fillWidth: true                 // stretch to parent width\n        TextField { Layout.fillWidth: true }   // grows to fill the row\n        Button { text: \"Go\" }                  // stays natural size\n    }\n}" },
+        { type: "heading", text: "Lists: ListView + model + delegate" },
+        { type: "p", text: "QML's Model/View mirror of the C++ one: a **`ListView`** binds to a `model` (a number, a JS array, a `ListModel`, or a C++ `QAbstractListModel`) and stamps out one **`delegate`** per item. Inside the delegate, model roles are available by name (`name`, `age`, or `modelData` for simple lists)." },
+        { type: "code", lang: "qml", code: "ListView {\n    anchors.fill: parent\n    clip: true\n    model: ListModel {\n        ListElement { name: \"Ada\";  role: \"Eng\" }\n        ListElement { name: \"Linus\"; role: \"Kernel\" }\n    }\n    delegate: ItemDelegate {\n        width: ListView.view.width\n        text: name + \" — \" + role      // role names from the model\n        onClicked: console.log(\"tapped\", index)  // 'index' is provided\n    }\n    ScrollBar.vertical: ScrollBar {}\n}" },
+        { type: "callout", variant: "tip", text: "**`Repeater`** stamps a fixed set of items into a positioner (great for a handful of buttons); **`ListView`**/`GridView` virtualize (only visible delegates exist) for long/scrolling data. Feed a C++ `QAbstractListModel` straight into `model:` and expose fields as roles for the best of both worlds." },
+        { type: "heading", text: "States & transitions" },
+        { type: "p", text: "Rather than imperatively toggling properties, declare named **`State`s** (each a set of `PropertyChanges`) and let **`Transition`s** animate the moves between them. The UI becomes a description of *what each state looks like*, not step-by-step mutation code." },
+        { type: "code", lang: "qml", code: "Rectangle {\n    id: card; width: 200; height: 120; color: \"#334\"\n    states: State {\n        name: \"expanded\"; when: mouse.containsMouse\n        PropertyChanges { card.height: 240; card.color: \"#4557aa\" }\n    }\n    transitions: Transition {\n        NumberAnimation { properties: \"height\"; duration: 200; easing.type: Easing.OutCubic }\n        ColorAnimation { duration: 200 }\n    }\n    MouseArea { id: mouse; anchors.fill: parent; hoverEnabled: true }\n}" },
+        { type: "heading", text: "Animations directly" },
+        { type: "list", items: [
+          "**`NumberAnimation` / `ColorAnimation` / `PropertyAnimation`** animate a property over a duration + easing.",
+          "**`Behavior on x { NumberAnimation { duration: 150 } }`** — auto-animate *every* change to property `x`, wherever it comes from.",
+          "**`SequentialAnimation` / `ParallelAnimation`** compose steps; **`PauseAnimation`** inserts delays; `loops: Animation.Infinite` repeats.",
+          "**`Component.onCompleted`** runs JS on load; QML also lets you define your own `signal foo()` and handle it as `onFoo`."
+        ] },
+        { type: "callout", variant: "note", text: "Because QML runs on the GPU scene graph, these animations are cheap and buttery. This declarative state+transition model is the main reason to pick Qt Quick over Widgets for animated, touch or embedded UIs." }
       ]
     },
     {
@@ -438,7 +486,13 @@
     { q: "What is the safe way to delete a QObject from inside its own slot?", a: "`deleteLater()` — it schedules destruction for when control returns to the event loop, avoiding deletion of an object mid-signal." },
     { q: "What does `qobject_cast<T*>` offer over `dynamic_cast`?", a: "It uses the meta-object system: faster, works across DLL boundaries, returns `nullptr` on mismatch — but only for `QObject`-derived types." },
     { q: "What's the difference between signals/slots and the event system?", a: "**Events** are low-level input/system messages dispatched via `event()`/handlers; **signals** are higher-level application notifications. Widgets often translate events into signals (a mouse-release becomes `clicked()`)." },
-    { q: "Which Qt license lets you keep proprietary source, and what's the catch?", a: "**LGPLv3** — allowed if you **dynamically link** Qt and let users relink a modified Qt. Static linking or GPL-only modules impose stronger obligations; the **commercial** license removes them." }
+    { q: "Which Qt license lets you keep proprietary source, and what's the catch?", a: "**LGPLv3** — allowed if you **dynamically link** Qt and let users relink a modified Qt. Static linking or GPL-only modules impose stronger obligations; the **commercial** license removes them." },
+    { q: "What is a QAction and why use one instead of wiring a button directly?", a: "A `QAction` is one object for a user command (text, icon, shortcut, enabled state). Add it to a **menu, a toolbar and a shortcut** at once — all fire `triggered()`, and enabling/disabling the action updates all three together." },
+    { q: "What are the rules of custom painting with QPainter?", a: "Paint only inside `paintEvent()` (or onto an off-screen `QImage`/`QPixmap`); never call `paintEvent()` directly — call `update()` to request a repaint. The same painter code targets widgets, images, SVG or PDF." },
+    { q: "When do you use Graphics View instead of hand-painting?", a: "For many interactive 2D objects (diagram/CAD/games): a `QGraphicsScene` holds `QGraphicsItem`s shown by a `QGraphicsView`, handling selection, z-order, hit-testing, zoom/pan for you." },
+    { q: "In QML, what are the three ways to position items?", a: "**Anchors** (glue edges: `anchors.fill/centerIn`), **positioners** (`Row`/`Column`/`Grid` auto-arrange), and **Qt Quick Layouts** (`RowLayout`/`ColumnLayout` that *resize* children via `Layout.fillWidth` etc.)." },
+    { q: "How does a QML ListView render data?", a: "It binds a `model` (number, JS array, `ListModel`, or a C++ `QAbstractListModel`) and stamps one `delegate` per item; model **roles** are available by name inside the delegate (plus `index`/`modelData`). It virtualizes long lists." },
+    { q: "How does QML animate between UI configurations?", a: "Declare named **`State`s** (each a set of `PropertyChanges`) and **`Transition`s** that animate the moves. Or use `Behavior on prop { NumberAnimation{} }` to auto-animate every change to a property." }
   ],
 
   cheatsheet: [
@@ -450,6 +504,12 @@
     { label: "Emit", code: "emit progress(value);" },
     { label: "Property", code: "Q_PROPERTY(int x READ x WRITE setX NOTIFY xChanged)" },
     { label: "Move to thread", code: "worker->moveToThread(thread); thread->start();" },
+    { label: "Action + shortcut", code: "act->setShortcut(QKeySequence::Open); menu->addAction(act);" },
+    { label: "Open-file dialog", code: "QFileDialog::getOpenFileName(this, tr(\"Open\"));" },
+    { label: "Paint", code: "void paintEvent(QPaintEvent*){ QPainter p(this); p.drawRect(r); }" },
+    { label: "Animate property", code: "new QPropertyAnimation(obj, \"geometry\");" },
+    { label: "QML fill parent", code: "anchors.fill: parent" },
+    { label: "QML list", code: "ListView { model: m; delegate: ItemDelegate {} }" },
     { label: "Background run", code: "QtConcurrent::run([]{ return work(); });" },
     { label: "Async HTTP GET", code: "auto *r = nam->get(QNetworkRequest(url));" },
     { label: "Safe delete", code: "obj->deleteLater();" },
