@@ -4,7 +4,7 @@
   language: "Python",
   tagline: "The **micro-framework**: a tiny, unopinionated core (routing + Jinja2) that you grow with extensions — from a one-file API to a full server-rendered web app.",
   color: "#5b6673",
-  readMinutes: 17,
+  readMinutes: 19,
   group: "Python",
 
   sections: [
@@ -203,7 +203,7 @@
       level: "deep",
       body: [
         { type: "p", text: "Flask 2.0+ accepts `async def` views (install `Flask[async]`), but Flask is still a **WSGI/synchronous** framework: each async view runs in its own event loop on a worker thread. It does **not** give you FastAPI-style concurrency — it's mainly convenient for awaiting an occasional async library." },
-        { type: "code", lang: "py", code: "# pip install \"Flask[async]\"\n@app.get(\"/proxy\")\nasync def proxy():\n    async with httpx.AsyncClient() as client:\n        r = await client.get(\"https://api.example.com\")\n    return r.json()" },
+        { type: "code", lang: "py", code: "# pip install \"Flask[async]\" httpx\nimport httpx\n\n@app.get(\"/proxy\")\nasync def proxy():\n    # each request spins up (and tears down) its own event loop on a\n    # worker thread -- fine for awaiting a lib, NOT true concurrency\n    async with httpx.AsyncClient(timeout=5) as client:\n        r = await client.get(\"https://api.example.com/status\")\n    return r.json()\n\n# CANNOT await background work after returning: the loop is gone.\n# Offload long/CPU jobs to a queue instead:\n#   from .tasks import send_email      # a Celery/RQ task\n#   send_email.delay(user.email)       # returns immediately" },
         { type: "callout", variant: "warn", text: "For real concurrency or true ASGI, use **Quart** (an ASGI-native, Flask-API-compatible framework) instead. For CPU-heavy or long jobs, offload to a task queue (**Celery** / **RQ**) — don't block a Flask worker." }
       ]
     },
@@ -230,6 +230,55 @@
         ] },
         { type: "code", lang: "bash", code: "pip install gunicorn\n# 4 sync workers; wsgi.py exposes `app`\ngunicorn -w 4 -b 0.0.0.0:8000 wsgi:app\n\n# for many async/slow-I/O views, use gthread or gevent workers:\ngunicorn -w 2 -k gthread --threads 8 wsgi:app" },
         { type: "callout", variant: "gotcha", text: "Gunicorn's default **sync** worker handles one request at a time per worker — size `-w` to your CPU (a common start: `2 × cores + 1`). For lots of slow I/O, use `gthread` or `gevent` workers rather than piling on sync workers." }
+      ]
+    },
+    {
+      id: "headaches",
+      title: "Common headaches & how to handle them",
+      level: "deep",
+      body: [
+        { type: "p", text: "The Contexts and App-factory sections introduced *why* Flask works the way it does. This section is the field guide to the **consequences** — the errors and surprises that bite in real deployments, and the concrete fix for each. Skim it before you ship." },
+
+        { type: "heading", text: "1. `current_app`/`db` in a thread, script, or at import time" },
+        { type: "p", text: "The \"Working outside of application context\" `RuntimeError` (covered in Contexts) shows up most often *outside* a normal request: a background `threading.Thread`, a plain Python script, a Celery task, or module-level code that runs at import. There is no request being handled, so the context-local globals have nothing to point at. **Push a context manually.**" },
+        { type: "code", lang: "py", code: "from myapp import create_app\nfrom myapp.extensions import db\nfrom myapp.models import User\n\napp = create_app()\n\n# WRONG: no context active -> RuntimeError\n# users = db.session.scalars(select(User)).all()\n\n# RIGHT: push an application context for the duration of the block\nwith app.app_context():\n    users = db.session.scalars(select(User)).all()\n    # current_app, db, g are all usable in here\n\n# In a background thread you must push the context INSIDE the thread,\n# because contexts are thread-local (they don't inherit across threads):\nimport threading\n\ndef worker(app):\n    with app.app_context():\n        db.session.add(User(email=\"bg@x.io\", name=\"bg\"))\n        db.session.commit()\n\nthreading.Thread(target=worker, args=(app,)).start()" },
+        { type: "callout", variant: "tip", text: "For one-off exploration use **`flask shell`** — it opens a Python REPL with an application context already pushed and `app`/`db` (and anything registered via `@app.shell_context_processor`) preloaded, so `db.session` just works without the `with` block." },
+
+        { type: "heading", text: "2. One slow request blocks a whole worker" },
+        { type: "p", text: "Flask is **synchronous WSGI**: a worker processes exactly one request start-to-finish before taking the next. A single 10-second call (an external API, a heavy report, `time.sleep`) means that worker serves *nobody* else for 10 seconds. The dev server makes this worse — by default it's effectively single-request, so it is never a capacity test and never for production." },
+        { type: "table", headers: ["Symptom", "Cause", "Fix"], rows: [
+          ["App \"hangs\" under light load", "Too few workers for blocking I/O", "More gunicorn workers, or `-k gthread`/`gevent`"],
+          ["A slow endpoint stalls everything", "Long work inline in the view", "Offload to a task queue (Celery/RQ); return a job id"],
+          ["`async def` view still not concurrent", "WSGI runs each in its own loop", "Use an ASGI server (Quart/Hypercorn) for real concurrency"]
+        ] },
+        { type: "callout", variant: "warn", text: "`async def` views (see Async section) run in a **fresh per-request event loop on a worker thread** — they let you `await` a library but give **no** throughput gain over sync views under WSGI. If you need thousands of concurrent connections, you need an ASGI stack, not `async def` on Flask." },
+
+        { type: "heading", text: "3. Module/global state is per-process, not shared across workers" },
+        { type: "p", text: "In production you run **multiple gunicorn workers**, each a separate OS process with its **own** copy of your module globals. An in-memory dict cache, a counter, or a naive rate-limiter works perfectly with one dev worker and then silently fragments in production: request A hits worker 1's copy, request B hits worker 2's copy." },
+        { type: "code", lang: "py", code: "# BROKEN across workers: each process has its own _cache / _hits\n_cache = {}\n_hits = 0\n\n@app.get(\"/count\")\ndef count():\n    global _hits\n    _hits += 1              # only counts THIS worker's requests\n    return {\"hits\": _hits}\n\n# FIX: keep shared state in an external store every worker can reach\nimport redis\nr = redis.Redis.from_url(app.config[\"REDIS_URL\"])\n\n@app.get(\"/count2\")\ndef count2():\n    return {\"hits\": r.incr(\"hits\")}   # atomic, shared by all workers" },
+        { type: "callout", variant: "gotcha", text: "Any cross-request shared state — caches, counters, rate limits, session stores, background schedulers — must live in **Redis, a database, or a dedicated service**, not a Python global. (Flask-Limiter, Flask-Caching, Flask-Session all take a Redis/DB backend for exactly this reason.)" },
+
+        { type: "heading", text: "4. `DetachedInstanceError`: using a model after its session closed" },
+        { type: "p", text: "Flask-SQLAlchemy scopes `db.session` to the request and **removes it on teardown** (the Contexts/ORM sections touched on this). A model instance loaded in one request/context is *bound* to that session; touch a lazy-loaded attribute after teardown and SQLAlchemy raises **`DetachedInstanceError`** because it can no longer emit the query. Common triggers: stashing a model in a module global, passing an instance into a background thread, or accessing a relationship in a template after `session.remove()`." },
+        { type: "code", lang: "py", code: "# TRAP: hand a live ORM object to a thread; its session is torn down\n#       by the time the thread reads user.orders -> DetachedInstanceError\n\n# FIX 1: pass the primary key, re-fetch inside the new context\ndef worker(app, user_id):\n    with app.app_context():\n        user = db.session.get(User, user_id)   # fresh, session-bound\n        _process(user.orders)\n\n# FIX 2: force-load what you need before the session goes away\nfrom sqlalchemy.orm import selectinload\nuser = db.session.scalar(\n    select(User).options(selectinload(User.orders)).filter_by(id=1)\n)\n# user.orders is now eagerly populated and safe to read later\n\n# FIX 3: read attributes into plain data while the session is open\ndata = user.to_dict()   # a dict survives; the ORM instance may not" },
+        { type: "callout", variant: "note", text: "Rule of thumb: **don't let ORM instances outlive their request/context.** Pass IDs across boundaries and re-query, eager-load relationships you'll need later, or serialize to a plain `dict` before the session is removed." },
+
+        { type: "heading", text: "5. Circular imports with the factory, extensions & blueprints" },
+        { type: "p", text: "The app-factory + `init_app` pattern (App-factory section) exists precisely to **break import cycles**, but you can still create one. The usual mistake: importing `app` at the top of a models/routes module, or constructing an extension against a specific app. The cure is discipline — extensions are created *bare* in one module, models import only that extension, and blueprints are imported **inside** `create_app` (deferred), not at module top." },
+        { type: "code", lang: "py", code: "# extensions.py -- create BARE, no app anywhere\nfrom flask_sqlalchemy import SQLAlchemy\ndb = SQLAlchemy()\n\n# models.py -- import the extension, never `from app import app`\nfrom .extensions import db\nclass User(db.Model): ...\n\n# __init__.py (the factory)\ndef create_app():\n    app = Flask(__name__)\n    from .extensions import db\n    db.init_app(app)                     # bind here, not at import time\n\n    # import blueprints INSIDE the factory to defer their imports\n    from .users.routes import bp as users_bp\n    from .api.routes import bp as api_bp\n    app.register_blueprint(users_bp, url_prefix=\"/users\")\n    app.register_blueprint(api_bp,  url_prefix=\"/api\")   # order matters if\n    return app                                            # prefixes overlap" },
+        { type: "callout", variant: "gotcha", text: "If you hit `ImportError: cannot import name ... (most likely due to a circular import)`, the fix is almost always: (a) create the extension bare in `extensions.py`, (b) import models from the extension — never from the app package's `__init__`, and (c) move blueprint imports **inside** `create_app`. Registration order only matters when two blueprints claim overlapping URL rules or you rely on the first-registered error handler." },
+
+        { type: "heading", text: "6. `debug=True` and a missing `SECRET_KEY` in production" },
+        { type: "p", text: "The Setup section flagged that the debugger runs arbitrary code; it bears repeating as a **security** headache because it's a real, exploited RCE. With debug on, Werkzeug's interactive traceback exposes a console guarded only by a PIN — reachable by anyone who can trigger an exception on a public server. Separately, if `SECRET_KEY` is unset or hard-coded, session cookies and CSRF tokens can be forged." },
+        { type: "code", lang: "py", code: "# NEVER in production: hard-coded debug / secret\n# app.run(debug=True)\n# app.secret_key = \"dev\"\n\nimport os\n\n# Load the secret from the environment; fail loudly if absent\napp.config[\"SECRET_KEY\"] = os.environ[\"SECRET_KEY\"]   # KeyError if missing = good\n\n# Debug should be driven by env, defaulting OFF\napp.config[\"DEBUG\"] = os.environ.get(\"FLASK_DEBUG\") == \"1\"" },
+        { type: "code", lang: "bash", code: "# generate a strong secret once, keep it in the environment / a secret store\npython -c \"import secrets; print(secrets.token_hex(32))\"\nexport SECRET_KEY=\"...the generated value...\"\n\n# production start -- no --debug flag anywhere\ngunicorn -w 4 -b 0.0.0.0:8000 wsgi:app" },
+        { type: "callout", variant: "warn", text: "Treat `debug=True` / `flask run --debug` as **local-only**. In production run under gunicorn with `DEBUG` off and `SECRET_KEY` sourced from the environment (or a secrets manager). A leaked or default secret key lets attackers forge signed sessions and CSRF tokens." },
+
+        { type: "heading", text: "7. Config sprawl across environments" },
+        { type: "p", text: "As dev/staging/prod diverge, scattered `app.config[...]` assignments become impossible to reason about. Centralize config into **classes** (a base plus per-environment subclasses) and load the right one via `from_object`, then layer environment overrides with `from_prefixed_env`. Keep secrets in the environment, defaults in code." },
+        { type: "code", lang: "py", code: "# config.py -- one place, per-environment classes\nimport os\n\nclass BaseConfig:\n    SECRET_KEY = os.environ.get(\"SECRET_KEY\", \"dev-only-change-me\")\n    SQLALCHEMY_DATABASE_URI = os.environ.get(\"DATABASE_URL\", \"sqlite:///app.db\")\n    SQLALCHEMY_TRACK_MODIFICATIONS = False\n\nclass DevConfig(BaseConfig):\n    DEBUG = True\n\nclass ProdConfig(BaseConfig):\n    DEBUG = False\n    SECRET_KEY = os.environ[\"SECRET_KEY\"]        # required in prod\n\nCONFIGS = {\"dev\": DevConfig, \"prod\": ProdConfig}" },
+        { type: "code", lang: "py", code: "# factory: pick the class from an env var, then let FLASK_* override\ndef create_app():\n    app = Flask(__name__)\n    env = os.environ.get(\"APP_ENV\", \"dev\")\n    app.config.from_object(CONFIGS[env])          # base per-environment values\n    app.config.from_prefixed_env()                # FLASK_* env vars win last\n    # app.config.from_pyfile(\"instance/local.cfg\", silent=True)  # optional\n    return app" },
+        { type: "callout", variant: "tip", text: "Precedence, low → high: **class defaults** (`from_object`) → **env overrides** (`from_prefixed_env`, e.g. `FLASK_SQLALCHEMY_DATABASE_URI=...`) → optional untracked **instance file**. Pick the environment with a single var (`APP_ENV`) so one image runs everywhere with no code changes." }
       ]
     }
   ],
@@ -259,7 +308,10 @@
     "Always `db.session.commit()` (or `rollback()`); the session is discarded at request teardown and uncommitted changes are lost.",
     "Construct extensions at module level and bind with `.init_app(app)` in the factory — creating them against a specific app causes circular imports.",
     "A 400 on a form POST usually means a missing/invalid **CSRF token** — render `{{ form.csrf_token }}`.",
-    "Jinja autoescapes by default; only use `| safe` on HTML you fully trust, or you reintroduce XSS."
+    "Jinja autoescapes by default; only use `| safe` on HTML you fully trust, or you reintroduce XSS.",
+    "**Module globals are per-worker** — in-memory caches, counters and rate limits fragment across gunicorn processes. Keep shared state in Redis/DB.",
+    "**`DetachedInstanceError`** means you used an ORM instance after its request/session was torn down. Pass the primary key and re-query, eager-load, or serialize to a dict first.",
+    "Push a context (`with app.app_context():`) for `db`/`current_app` in **scripts, Celery tasks and background threads** — and push it *inside* the thread, since contexts are thread-local."
   ],
 
   flashcards: [
@@ -272,7 +324,9 @@
     { q: "What is a blueprint?", a: "A modular group of routes (and templates/static) registered onto the app with `app.register_blueprint(bp, url_prefix=...)`; its endpoints are namespaced (`url_for(\"bp.view\")`)." },
     { q: "How does Flask return JSON?", a: "Return a `dict`/`list` (auto-serialized since 2.1) or call `jsonify(...)` when you need explicit status/headers. A `(body, status)` tuple sets the status code." },
     { q: "Is Flask async? ", a: "No — it's **synchronous WSGI**. It accepts `async def` views (2.0+) run on a per-view event loop, but for real concurrency use Quart (ASGI) or a task queue like Celery." },
-    { q: "How do you protect an HTML form and validate it?", a: "**Flask-WTF**: a `FlaskForm` subclass with WTForms validators; `form.validate_on_submit()` checks POST + validity + **CSRF**, and you render `{{ form.csrf_token }}`." }
+    { q: "How do you protect an HTML form and validate it?", a: "**Flask-WTF**: a `FlaskForm` subclass with WTForms validators; `form.validate_on_submit()` checks POST + validity + **CSRF**, and you render `{{ form.csrf_token }}`." },
+    { q: "Why does an in-memory counter or cache give wrong results in production?", a: "Production runs **multiple gunicorn workers, each its own process** with its own module globals — state fragments per-worker. Put shared state in **Redis/DB** (e.g. `r.incr(\"hits\")`), not a Python global." },
+    { q: "What is `DetachedInstanceError` and how do you avoid it?", a: "You accessed an ORM instance after its `db.session` was removed at request teardown (e.g. in a thread or template after `session.remove()`). Fix: **pass the primary key and re-query** in a fresh context, **eager-load** relationships up front, or **serialize to a dict** while the session is open." }
   ],
 
   cheatsheet: [
@@ -285,6 +339,8 @@
     { label: "Blueprint", code: "bp = Blueprint(\"users\", __name__)" },
     { label: "Migrate", code: "flask db migrate -m 'msg' && flask db upgrade" },
     { label: "Protect route", code: "@login_required" },
-    { label: "Prod server", code: "gunicorn -w 4 wsgi:app" }
+    { label: "Prod server", code: "gunicorn -w 4 wsgi:app" },
+    { label: "Context for scripts", code: "with app.app_context(): db.session.commit()" },
+    { label: "Shell w/ context", code: "flask shell" }
   ]
 });

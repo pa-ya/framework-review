@@ -4,7 +4,7 @@
   language: "Python",
   tagline: "Async Python APIs built on **type hints** — automatic validation, serialization and OpenAPI docs for free.",
   color: "#009688",
-  readMinutes: 16,
+  readMinutes: 24,
   group: "Python",
 
   sections: [
@@ -266,6 +266,38 @@
       ]
     },
     {
+      id: "pagination",
+      title: "Pagination",
+      level: "deep",
+      body: [
+        { type: "p", text: "Two schemes. **Offset/limit** is easy and jump-to-page friendly but gets slow on deep pages (`OFFSET 100000` still scans them) and can skip/duplicate rows when data shifts. **Keyset (cursor)** paginates by \"give me rows after this id/timestamp\" — fast at any depth and stable under inserts, but no random page access." },
+        { type: "code", lang: "py", code: "from pydantic import BaseModel\nfrom sqlalchemy import select, func\n\nclass Page(BaseModel):\n    items: list[UserOut]\n    total: int\n    limit: int\n    offset: int\n\n@app.get(\"/users\", response_model=Page)\nasync def list_users(db: ADB, limit: int = 20, offset: int = 0):\n    limit = min(limit, 100)                       # cap it — never trust the client\n    total = await db.scalar(select(func.count()).select_from(User))\n    rows = await db.scalars(select(User).limit(limit).offset(offset))\n    return Page(items=rows.all(), total=total, limit=limit, offset=offset)" },
+        { type: "code", lang: "py", code: "# keyset / cursor: paginate on the last id you saw (indexed, no OFFSET scan)\n@app.get(\"/feed\")\nasync def feed(db: ADB, after_id: int | None = None, limit: int = 20):\n    q = select(Post).order_by(Post.id).limit(limit)\n    if after_id is not None:\n        q = q.where(Post.id > after_id)\n    rows = (await db.scalars(q)).all()\n    next_cursor = rows[-1].id if rows else None\n    return {\"items\": rows, \"next\": next_cursor}   # client sends ?after_id=next" },
+        { type: "callout", variant: "tip", text: "Don't hand-roll if you don't want to: **`fastapi-pagination`** adds a `Params`/`Page[T]` dependency and a `paginate(db, query)` helper that works with SQLAlchemy, and supports both limit-offset and cursor pages with a consistent response shape." }
+      ]
+    },
+    {
+      id: "common-headaches",
+      title: "Common headaches & how to handle them",
+      level: "deep",
+      body: [
+        { type: "p", text: "The bugs that actually bite FastAPI teams, and the fix for each." },
+        { type: "heading", text: "1. A blocking call sneaks into async" },
+        { type: "p", text: "The single most common cause of a FastAPI app \"getting slow under load\": a sync/blocking call inside `async def`. Offload it instead of rewriting everything." },
+        { type: "code", lang: "py", code: "from fastapi.concurrency import run_in_threadpool\n\n@app.get(\"/thumb\")\nasync def thumb(url: str):\n    # heavy sync lib (Pillow, requests, a sync SDK) -> run OFF the event loop\n    img = await run_in_threadpool(make_thumbnail, url)\n    return {\"ok\": True}" },
+        { type: "heading", text: "2. yield-dependency cleanup vs BackgroundTasks" },
+        { type: "callout", variant: "gotcha", text: "A DB session from a `yield` dependency is **closed when the response is sent** — but `BackgroundTasks` run *after* that. If a background task uses the request's `db`, it hits a closed session. Fix: open a **fresh** session inside the background task, or do the DB work before returning." },
+        { type: "heading", text: "3. The N+1 query" },
+        { type: "p", text: "Accessing a relationship in a loop fires one query per row. Eager-load it in a single round-trip." },
+        { type: "code", lang: "py", code: "from sqlalchemy.orm import selectinload\n\n# BAD: 1 query for authors + N queries (one per author.posts access)\n# GOOD: 2 queries total, relationship preloaded\nauthors = await db.scalars(\n    select(Author).options(selectinload(Author.posts))\n)" },
+        { type: "heading", text: "4. Dependencies are cached per-request" },
+        { type: "callout", variant: "note", text: "The same `Depends(x)` used by several dependencies in one request is resolved **once** and reused (a feature — one DB session, not five). Need a fresh value each time? `Depends(x, use_cache=False)`." },
+        { type: "heading", text: "5. Circular imports in a layered app" },
+        { type: "code", lang: "py", code: "# models import schemas import models... -> ImportError\n# break the type-only cycle with TYPE_CHECKING\nfrom typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    from .models import User   # only imported by the type checker, not at runtime" },
+        { type: "callout", variant: "warn", text: "**CORS preflight failing** in the browser but the endpoint works in curl? The `OPTIONS` request is handled by `CORSMiddleware`, which must be added with the right `allow_origins`/`allow_methods`/`allow_headers` — and `allow_origins=[\"*\"]` is **incompatible with** `allow_credentials=True`. List explicit origins when you send cookies." }
+      ]
+    },
+    {
       id: "deploy",
       title: "Deployment notes",
       level: "deep",
@@ -291,7 +323,14 @@
     { name: "pyjwt", why: "JWT encode/decode (prefer over the unmaintained python-jose)" },
     { name: "pwdlib[argon2]", why: "modern password hashing (Argon2); passlib is unmaintained" },
     { name: "httpx", why: "async HTTP client + test client" },
-    { name: "celery", why: "heavy background jobs" }
+    { name: "celery[redis]", why: "durable/scheduled background jobs (separate worker)" },
+    { name: "arq", why: "asyncio-native task queue (write async tasks)" },
+    { name: "redis", why: "cache / rate-limit / sessions (async client built in)" },
+    { name: "fastapi-cache2", why: "@cache decorator backed by Redis" },
+    { name: "slowapi", why: "rate limiting (@limiter.limit)" },
+    { name: "python-multipart", why: "required for form fields & file uploads" },
+    { name: "fastapi-pagination", why: "drop-in Page[T] pagination" },
+    { name: "flower", why: "Celery monitoring dashboard" }
   ],
 
   gotchas: [
@@ -300,7 +339,11 @@
     "Mutable default arguments (`= []`, `= {}`) are shared across calls — use `Field(default_factory=list)`.",
     "`response_model` filters output fields; if data is missing it can silently drop it — verify the schema matches.",
     "Pydantic v1 → v2 renamed a lot: `.dict()`→`.model_dump()`, `orm_mode`→`from_attributes`, `@validator`→`@field_validator`.",
-    "SQLAlchemy sessions aren't thread-safe; create one per request (yield dependency), never a global session."
+    "SQLAlchemy sessions aren't thread-safe; create one per request (yield dependency), never a global session.",
+    "`BackgroundTasks` run after the response but in-process: a yield-dependency DB session is already closed, and the task isn't retried or persisted — use Celery/ARQ for durable work.",
+    "Celery tasks run in a separate process: pass **ids**, not ORM objects/sessions, and build connections inside the task — they don't share your FastAPI event loop or lifespan state.",
+    "File uploads need `python-multipart` installed, and never build the save path from `file.filename` (path traversal) — generate your own name.",
+    "`CORSMiddleware` with `allow_origins=[\"*\"]` cannot be combined with `allow_credentials=True`; list explicit origins when sending cookies."
   ],
 
   flashcards: [
@@ -311,7 +354,12 @@
     { q: "What is `Depends` used for?", a: "Dependency injection — reusable, composable providers (DB, current user, pagination, config) resolved and injected by FastAPI." },
     { q: "Which Pydantic v2 method replaces `.dict()`?", a: "`.model_dump()` (and `.model_dump_json()` for JSON)." },
     { q: "How do you return a proper 404?", a: "`raise HTTPException(status_code=404, detail=\"...\")`." },
-    { q: "How do you let a Pydantic model read from an ORM object?", a: "Set `model_config = ConfigDict(from_attributes=True)` (was `orm_mode` in v1)." }
+    { q: "How do you let a Pydantic model read from an ORM object?", a: "Set `model_config = ConfigDict(from_attributes=True)` (was `orm_mode` in v1)." },
+    { q: "When should you reach for Celery instead of BackgroundTasks?", a: "When the work must survive a restart, needs retries or scheduling, must run on a separate machine, or is CPU-heavy. `BackgroundTasks` is in-process, fire-and-forget, no queue." },
+    { q: "Why must you pass an id (not an ORM object) to a Celery task?", a: "The task runs in a **separate process**; arguments are serialized. Pass the id and re-load the row inside the task with its own DB session; return plain data too." },
+    { q: "What's the cache-aside pattern with Redis?", a: "On read: check Redis; on miss, hit the source of truth and `SET` it with a TTL. On write: update the source and `DELETE` the key to invalidate." },
+    { q: "Offset/limit vs keyset pagination — when each?", a: "Offset/limit for small tables + jump-to-page; keyset (WHERE id > cursor) for large tables/infinite scroll — it's index-fast at any depth and stable under inserts." },
+    { q: "How do you offload a blocking call inside an async handler?", a: "`await run_in_threadpool(fn, ...)` from `fastapi.concurrency` — runs it off the event loop without rewriting the handler as `def`." }
   ],
 
   cheatsheet: [
@@ -322,6 +370,11 @@
     { label: "Inject dep", code: "x: Annotated[T, Depends(dep)]" },
     { label: "Error", code: "raise HTTPException(404, \"not found\")" },
     { label: "Router", code: "app.include_router(users.router)" },
-    { label: "Migration", code: "alembic revision --autogenerate -m 'msg'" }
+    { label: "Migration", code: "alembic revision --autogenerate -m 'msg'" },
+    { label: "Celery task", code: "@celery.task def f(id): ...  # f.delay(id)" },
+    { label: "Celery worker", code: "celery -A worker.celery worker -c 4" },
+    { label: "Redis cache", code: "await r.set(key, val, ex=60)" },
+    { label: "Offload blocking", code: "await run_in_threadpool(fn, arg)" },
+    { label: "File upload", code: "async def up(file: UploadFile): ..." }
   ]
 });

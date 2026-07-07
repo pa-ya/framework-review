@@ -4,7 +4,7 @@
   language: "Go",
   tagline: "Build real backends with almost **no dependencies** — since Go 1.22, `net/http` routing plus `log/slog` cover most of what a framework used to.",
   color: "#00ADD8",
-  readMinutes: 16,
+  readMinutes: 18,
   group: "Go",
 
   sections: [
@@ -214,6 +214,52 @@
         ] },
         { type: "code", lang: "bash", code: "# Dockerfile (multi-stage)\nFROM golang:1.24 AS build\nWORKDIR /src\nCOPY . .\nRUN CGO_ENABLED=0 go build -ldflags='-s -w' -o /app .\n\nFROM gcr.io/distroless/static\nCOPY --from=build /app /app\nEXPOSE 8080\nENTRYPOINT [\"/app\"]" }
       ]
+    },
+    {
+      id: "headaches",
+      title: "Common headaches & how to handle them",
+      level: "deep",
+      body: [
+        { type: "p", text: "The bugs that actually page you in Go production are almost all about **concurrency, cancellation and error identity** — not syntax. This is the canonical list; the framework decks (chi, Echo) point back here." },
+
+        { type: "heading", text: "1. Goroutine leaks — always give a goroutine a way to stop" },
+        { type: "p", text: "A goroutine blocked forever on a channel send/receive (or a network read with no deadline) never gets collected — its stack, and everything it closes over, leaks. Every long-running goroutine needs a cancellation path, and `context` is how you thread one in." },
+        { type: "code", lang: "go", code: "// LEAK: if nobody ever receives from ch, this goroutine blocks forever.\n// When the caller returns early (timeout, error), the goroutine is orphaned.\nfunc leaky() {\n\tch := make(chan int) // unbuffered\n\tgo func() {\n\t\tch <- expensive()   // blocks here forever if no receiver\n\t}()\n\t// ... caller returns before reading ch -> goroutine leaked\n}\n\n// FIX: select on ctx.Done() so the goroutine can always exit.\nfunc worker(ctx context.Context, out chan<- int) {\n\tfor {\n\t\tselect {\n\t\tcase <-ctx.Done():\n\t\t\treturn                       // cancellation -> clean exit\n\t\tcase out <- expensive():\n\t\t\t// sent a result, loop again\n\t\t}\n\t}\n}" },
+        { type: "callout", variant: "warn", text: "Diagnose leaks by watching the goroutine count on `/debug/pprof/goroutine` (import `net/http/pprof`) — a number that only ever climbs is a leak. A buffered channel just delays the block; it doesn't remove the need for cancellation." },
+
+        { type: "heading", text: "2. context.Context — pass it, honor it, don't hoard it" },
+        { type: "p", text: "`context` is the standard cancellation and deadline mechanism. The rules are boring and non-negotiable: it's the **first** parameter, named `ctx`; you propagate it into every blocking call; and you never stash it in a struct field." },
+        { type: "code", lang: "go", code: "// Idiomatic: ctx first, honor its deadline, always cancel to free resources.\nfunc fetchUser(ctx context.Context, id int) (*User, error) {\n\tctx, cancel := context.WithTimeout(ctx, 2*time.Second)\n\tdefer cancel()                                  // releases the timer, even on early return\n\n\trow := db.QueryRowContext(ctx, \"SELECT ... WHERE id=$1\", id)\n\tvar u User\n\tif err := row.Scan(&u.ID, &u.Email); err != nil {\n\t\treturn nil, err                             // ctx-cancelled shows as context.DeadlineExceeded\n\t}\n\treturn &u, nil\n}" },
+        { type: "callout", variant: "gotcha", text: "Don't store a `context.Context` in a struct (`type Service struct { ctx context.Context }`) — a context is scoped to one call tree, not to an object's lifetime. Pass it per-method. The vet tool and linters flag the struct-field form for this reason." },
+
+        { type: "heading", text: "3. The nil-interface gotcha — a typed nil is not nil" },
+        { type: "p", text: "An interface value holds a `(type, value)` pair. A `(*T)(nil)` stored in an interface has a non-nil **type**, so `iface == nil` is **false** even though the underlying pointer is nil. This bites hardest when returning a typed nil as an `error`." },
+        { type: "code", lang: "go", code: "type MyError struct{}\nfunc (e *MyError) Error() string { return \"boom\" }\n\n// BUG: returns a non-nil error even on the happy path.\nfunc do() error {\n\tvar e *MyError            // nil pointer\n\t// ... nothing sets e ...\n\treturn e                 // wrapped in an interface -> (*MyError, nil) != nil\n}\n\nfunc main() {\n\tif err := do(); err != nil {\n\t\tfmt.Println(\"reports failure even though nothing failed!\")\n\t}\n}\n\n// FIX: return the untyped nil literal directly, don't return a typed nil pointer.\nfunc doFixed() error {\n\treturn nil               // or keep the error type out of the signature until you have one\n}" },
+
+        { type: "heading", text: "4. Data races — shared state needs a mutex, an atomic, or a channel" },
+        { type: "p", text: "Two goroutines touching the same variable with at least one write, and no synchronization, is a data race: undefined behavior, and concurrent **map** writes crash the process outright. Guard shared state, and run tests under the race detector." },
+        { type: "code", lang: "go", code: "// RACY: two handlers incrementing the same counter concurrently.\nvar hits int\nfunc handler(w http.ResponseWriter, r *http.Request) { hits++ } // data race\n\n// FIX A: sync/atomic for a simple counter (lock-free, fastest).\nvar hits atomic.Int64\nfunc handlerA(w http.ResponseWriter, r *http.Request) { hits.Add(1) }\n\n// FIX B: sync.Mutex for anything compound (a map, several fields together).\ntype Store struct {\n\tmu sync.Mutex\n\tm  map[string]int\n}\nfunc (s *Store) Inc(k string) {\n\ts.mu.Lock()\n\tdefer s.mu.Unlock()\n\ts.m[k]++\n}" },
+        { type: "callout", variant: "tip", text: "Run `go test -race ./...` (or build with `go build -race`) in CI. The race detector has near-zero false positives — if it flags something, it's real. It only catches races that actually execute, so exercise concurrent paths in tests." },
+
+        { type: "heading", text: "5. Loop variable capture in goroutines" },
+        { type: "p", text: "Before **Go 1.22** the loop variable was shared across every iteration, so a goroutine (or `defer`) closing over it saw the *final* value. Go 1.22+ gives each iteration its own copy and the classic bug is gone — but you'll still meet the old workaround in existing code and on older toolchains." },
+        { type: "code", lang: "go", code: "// Pre-1.22 BUG: all goroutines likely print the same (last) value.\nfor _, v := range items {\n\tgo func() { fmt.Println(v) }()   // captures the shared v\n}\n\n// Pre-1.22 FIX: shadow the variable so each closure gets its own copy.\nfor _, v := range items {\n\tv := v                            // per-iteration copy\n\tgo func() { fmt.Println(v) }()\n}\n\n// Go 1.22+: v is already per-iteration; the shadow line is no longer needed.\n// (Confirm your go.mod's `go` directive is >= 1.22 before relying on this.)" },
+        { type: "callout", variant: "note", text: "The fix is gated on the `go` version in your `go.mod`, not just the compiler you run — a module declaring `go 1.21` keeps the old sharing semantics even under a 1.22+ toolchain." },
+
+        { type: "heading", text: "6. defer inside a loop accumulates until the function returns" },
+        { type: "p", text: "`defer` fires at **function** return, not at the end of the loop body. Deferring a `Close()` inside a loop over thousands of files keeps every handle open until the whole function exits — you run out of file descriptors. Scope the work into a helper so each `defer` runs per item." },
+        { type: "code", lang: "go", code: "// BUG: every file stays open until process() returns.\nfunc process(paths []string) error {\n\tfor _, p := range paths {\n\t\tf, err := os.Open(p)\n\t\tif err != nil { return err }\n\t\tdefer f.Close()        // piles up; fd exhaustion on big lists\n\t\t// ... use f ...\n\t}\n\treturn nil\n}\n\n// FIX: a per-item helper so defer runs each iteration.\nfunc process(paths []string) error {\n\tfor _, p := range paths {\n\t\tif err := handleOne(p); err != nil { return err }\n\t}\n\treturn nil\n}\nfunc handleOne(p string) error {\n\tf, err := os.Open(p)\n\tif err != nil { return err }\n\tdefer f.Close()            // runs when handleOne returns, i.e. per file\n\t// ... use f ...\n\treturn nil\n}" },
+
+        { type: "heading", text: "7. HTTP client & server hygiene" },
+        { type: "p", text: "Two failure modes dominate: leaking response-body connections on the client side, and unbounded/ungraceful servers on the serving side." },
+        { type: "code", lang: "go", code: "// CLIENT: always close the body, even on non-2xx, or you leak connections.\nresp, err := http.Get(\"https://api.example.com/thing\")\nif err != nil { return err }\ndefer resp.Body.Close()               // required whenever err == nil\nif resp.StatusCode != http.StatusOK {\n\tio.Copy(io.Discard, resp.Body)    // drain so the conn can be reused\n\treturn fmt.Errorf(\"unexpected status %d\", resp.StatusCode)\n}\n\n// Don't use http.DefaultClient for outbound calls: it has NO timeout.\nvar client = &http.Client{Timeout: 10 * time.Second}" },
+        { type: "callout", variant: "warn", text: "On the server side the defaults are just as dangerous: `http.ListenAndServe` sets no timeouts and no graceful shutdown. Use an explicit `http.Server` with `ReadHeaderTimeout`/`WriteTimeout`/`IdleTimeout` and drain with `srv.Shutdown(ctx)` — see the 'http.Server: timeouts & graceful shutdown' section above." },
+
+        { type: "heading", text: "8. Error wrapping — keep the chain, compare by identity or type" },
+        { type: "p", text: "Wrap with `%w` to preserve the cause; then match sentinels with `errors.Is` and pull out concrete types with `errors.As`. Formatting with `%v`/`%s` flattens the chain and breaks both." },
+        { type: "code", lang: "go", code: "// wrap at each layer, adding context but keeping the cause reachable\nif err != nil {\n\treturn fmt.Errorf(\"load config %q: %w\", path, err)   // %w, not %v\n}\n\n// sentinel match anywhere in the chain\nif errors.Is(err, sql.ErrNoRows) {\n\treturn nil, ErrNotFound\n}\n\n// type match: extract a concrete error to read its fields\nvar pathErr *os.PathError\nif errors.As(err, &pathErr) {\n\tslog.Error(\"fs\", \"op\", pathErr.Op, \"path\", pathErr.Path)\n}" },
+        { type: "callout", variant: "gotcha", text: "Wrap at most once per layer and don't leak internal errors to clients verbatim — log the wrapped chain, return a sanitized message. Never build error control-flow on `err.Error()` string matching; use `errors.Is`/`errors.As`." }
+      ]
     }
   ],
 
@@ -242,7 +288,11 @@
     "`sql.Open` doesn't connect; call `db.PingContext` to validate the DSN, and always `defer rows.Close()` + check `rows.Err()`.",
     "Use `%w` (not `%v`) to wrap errors, or `errors.Is/As` can't see the cause.",
     "Don't use `r.Context()` for goroutines that outlive the request — it's cancelled when the response is sent; use `context.Background()`.",
-    "Concurrent writes to a shared map without a lock crash with `fatal error: concurrent map writes`."
+    "Concurrent writes to a shared map without a lock crash with `fatal error: concurrent map writes`.",
+    "A goroutine blocked forever on a channel/network read is a **leak** — always give it a `select { case <-ctx.Done(): return }` exit; watch `/debug/pprof/goroutine` for a climbing count.",
+    "A typed nil (`var e *MyError; return e`) stored in an `error` interface is **not** `== nil` — return the untyped `nil` literal, never a nil typed pointer.",
+    "`defer` fires at function return, not loop-iteration end — deferring `Close()` inside a big loop exhausts file descriptors; scope it into a per-item helper.",
+    "Loop-variable capture in goroutines was a footgun pre-Go 1.22 (shared `v`); 1.22+ scopes it per iteration — but only if `go.mod` declares `go 1.22`+."
   ],
 
   flashcards: [
@@ -255,7 +305,9 @@
     { q: "Why call `db.PingContext` after `sql.Open`?", a: "`sql.Open` only builds the pool lazily and doesn't connect, so it won't catch a bad DSN. `Ping` forces a real connection to fail fast at startup." },
     { q: "What is Go's stdlib structured logger and when was it added?", a: "`log/slog`, added in **Go 1.21** — leveled key/value logging with Text and JSON handlers; set global with `slog.SetDefault`." },
     { q: "Why not use a plain string as a context key?", a: "Keys from different packages could collide. Use an unexported named type (`type ctxKey string`) so keys are package-private and unique." },
-    { q: "What is HTTP middleware in stdlib Go?", a: "A `func(http.Handler) http.Handler` that wraps the next handler — compose by nesting. No framework needed; the whole app is handlers wrapping handlers." }
+    { q: "What is HTTP middleware in stdlib Go?", a: "A `func(http.Handler) http.Handler` that wraps the next handler — compose by nesting. No framework needed; the whole app is handlers wrapping handlers." },
+    { q: "Why can a returned `error` be non-nil when the underlying pointer is nil?", a: "An interface holds a (type, value) pair; a typed nil `(*MyError)(nil)` has a non-nil type, so `err == nil` is false. Return the untyped `nil` literal instead of a nil typed pointer." },
+    { q: "How do you stop a goroutine from leaking?", a: "Give it a cancellation path: pass a `context.Context` and `select { case <-ctx.Done(): return }` so a blocked send/receive can always unwind. A blocked goroutine is never garbage-collected." }
   ],
 
   cheatsheet: [
@@ -266,6 +318,8 @@
     { label: "Write JSON", code: "json.NewEncoder(w).Encode(v)" },
     { label: "Structured log", code: "slog.Info(\"msg\", \"key\", val)" },
     { label: "Graceful stop", code: "srv.Shutdown(ctx)" },
-    { label: "Query DB", code: "db.QueryContext(ctx, sql, args...)" }
+    { label: "Query DB", code: "db.QueryContext(ctx, sql, args...)" },
+    { label: "Race detector", code: "go test -race ./..." },
+    { label: "Close resp body", code: "defer resp.Body.Close()" }
   ]
 });

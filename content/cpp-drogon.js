@@ -4,7 +4,7 @@
   language: "C++",
   tagline: "A **non-blocking**, event-loop C++17/20 HTTP framework — coroutine DB access, a built-in ORM, and top-tier **TechEmpower** throughput.",
   color: "#e04a3f",
-  readMinutes: 20,
+  readMinutes: 22,
   group: "C++",
 
   sections: [
@@ -59,7 +59,7 @@
       level: "core",
       body: [
         { type: "p", text: "Drogon ships CMake package config. Consumers just `find_package(Drogon)` and link `Drogon::Drogon`, which transitively pulls Trantor, jsoncpp, and the DB clients." },
-        { type: "code", lang: "cmake", code: "cmake_minimum_required(VERSION 3.5)\nproject(my_app CXX)\n\nset(CMAKE_CXX_STANDARD 20)          # 17 minimum; 20 for coroutines\nset(CMAKE_CXX_STANDARD_REQUIRED ON)\n\nfind_package(Drogon CONFIG REQUIRED)\n\nadd_executable(my_app main.cc)\n\n# Compile controllers, models, filters, and generated views\naux_source_directory(controllers CTL_SRC)\naux_source_directory(models      MODEL_SRC)\ntarget_sources(my_app PRIVATE ${CTL_SRC} ${MODEL_SRC})\n\ntarget_link_libraries(my_app PRIVATE Drogon::Drogon)" },
+        { type: "code", lang: "cmake", code: "cmake_minimum_required(VERSION 3.5)\nproject(my_app CXX)\n\nset(CMAKE_CXX_STANDARD 20)          # 17 minimum; 20 for coroutines\nset(CMAKE_CXX_STANDARD_REQUIRED ON)\n\nfind_package(Drogon CONFIG REQUIRED)\n\nadd_executable(my_app main.cc)\n\n# Compile controllers, models, filters, and generated views\naux_source_directory(controllers CTL_SRC)\naux_source_directory(models      MODEL_SRC)\ntarget_sources(my_app PRIVATE \${CTL_SRC} \${MODEL_SRC})\n\ntarget_link_libraries(my_app PRIVATE Drogon::Drogon)" },
         { type: "code", lang: "bash", code: "mkdir build && cd build\ncmake .. && make -j$(nproc)\n./my_app        # reads ./config.json by default if you loadConfigFile it" },
         { type: "callout", variant: "tip", text: "The scaffolded `CMakeLists.txt` also wires **CSP view** compilation via `drogon_create_views(...)`, turning `.csp` templates into generated C++ source at build time." }
       ]
@@ -253,6 +253,41 @@
         { type: "code", lang: "bash", code: "# Multi-stage Docker sketch\n# FROM drogonframework/drogon AS build\n# COPY . /src && cd /src/build && cmake .. && make -j\n# FROM ubuntu:24.04\n# COPY --from=build /src/build/my_app /app/my_app\n# COPY config.json /app/config.json\n# CMD [\"/app/my_app\"]" },
         { type: "callout", variant: "good", text: "Drogon's single biggest performance win is architectural: non-blocking I/O + coroutine DB access means one thread handles thousands of in-flight requests. Keep every handler non-blocking and you inherit the benchmark-topping throughput for free." }
       ]
+    },
+    {
+      id: "headaches",
+      title: "Common headaches & how to handle them",
+      level: "deep",
+      body: [
+        { type: "p", text: "Drogon's speed comes from a *small* pool of single-threaded event loops. That architecture is also where every sharp edge lives: block a loop and you stall thousands of requests; capture a reference across a `co_await` and it dangles; forget a registration macro and you get a silent 404. Here is each trap and its fix." },
+
+        { type: "heading", text: "1. Blocking the event loop" },
+        { type: "p", text: "There is no thread-per-request pool. A handler runs *on* one of the few event loops, so any blocking call — a synchronous DB driver, `std::this_thread::sleep_for`, a big CPU crunch, a blocking file read — freezes **every other in-flight request** pinned to that loop. Under load the symptom is baffling: throughput collapses and latencies spike even though CPU looks idle (the loop is parked in a blocking syscall)." },
+        { type: "code", lang: "cpp", code: "// WRONG — blocks the whole event loop; every request on this loop stalls\nvoid slow(const HttpRequestPtr &req,\n          std::function<void(const HttpResponsePtr &)> &&cb) {\n    std::this_thread::sleep_for(std::chrono::seconds(2));   // NEVER on a loop\n    auto rows = blockingQuery();                            // sync DB = poison\n    cb(HttpResponse::newHttpResponse());\n}\n\n// RIGHT (coroutine) — co_await suspends the loop instead of blocking it\nTask<HttpResponsePtr> fast(HttpRequestPtr req) {\n    auto db   = app().getDbClient();\n    auto rows = co_await db->execSqlCoro(\"SELECT * FROM users\");   // yields, no block\n    co_return HttpResponse::newHttpJsonResponse(rowsToJson(rows));\n}\n\n// RIGHT (unavoidable blocking/CPU work) — push it off the loop to a worker thread\nvoid report(const HttpRequestPtr &req,\n            std::function<void(const HttpResponsePtr &)> &&cb) {\n    // trantor thread pool: run heavy work off the event loops, reply when done\n    static trantor::EventLoopThreadPool pool(2);   // create once, not per request\n    pool.getNextLoop()->queueInLoop([cb = std::move(cb)]{\n        auto body = heavyCpuCrunch();              // safe: not on a request loop\n        auto resp = HttpResponse::newHttpResponse();\n        resp->setBody(body);\n        cb(resp);\n    });\n}" },
+        { type: "callout", variant: "gotcha", text: "**Fix:** never block a handler. Use the **async/coroutine** DB and I/O APIs (`execSqlCoro`, `*Async`) so the loop suspends instead of parking. For genuinely blocking libraries or CPU-bound work, offload to a **worker thread / `trantor::EventLoopThreadPool`** and invoke the `callback` when done — never do the heavy work inline. `app().getLoop()->queueInLoop(...)` schedules work on a loop but does **not** make blocking work safe; it still runs on a loop thread." },
+
+        { type: "heading", text: "2. Coroutine gotchas (co_await, Task<>)" },
+        { type: "p", text: "Coroutines make async code read like sync code, but they need a C++20 compiler and the coroutine-enabled `DbClient`, and they change the lifetime rules. The two classic failures are a dangling capture across a suspension point and an exception thrown across `co_await` that you never catch." },
+        { type: "code", lang: "cpp", code: "// WRONG — 'body' is a string_view into the request; after co_await it may dangle\nTask<HttpResponsePtr> bad(HttpRequestPtr req) {\n    std::string_view body = req->getBody();      // view, not owned\n    co_await someAsyncThing();                    // suspension point\n    parse(body);                                  // body may be invalid here\n    co_return HttpResponse::newHttpResponse();\n}\n\n// RIGHT — copy out what you need BEFORE the first co_await; wrap DB in try/catch\nTask<HttpResponsePtr> good(HttpRequestPtr req) {   // req is a shared_ptr: safe by value\n    std::string body{req->getBody()};             // own the bytes\n    try {\n        auto db = app().getDbClient();\n        co_await db->execSqlCoro(\"INSERT INTO log(body) VALUES($1)\", body);\n    } catch (const DrogonDbException &e) {\n        auto r = HttpResponse::newHttpResponse();\n        r->setStatusCode(k500InternalServerError);\n        co_return r;                               // an uncaught throw here would 500 the request\n    }\n    co_return HttpResponse::newHttpResponse();\n}" },
+        { type: "callout", variant: "gotcha", text: "**Fix:** compile with **C++20** and a coroutine-capable `DbClient`; capture the `HttpRequestPtr`/callback **by value** (they are `shared_ptr`) and copy any `string_view`/reference into an owned value *before* the first `co_await`. Wrap `co_await`ed DB/IO in `try/catch` (`DrogonDbException`) — an exception that escapes a coroutine handler surfaces as a 500 and can be hard to trace. Fire-and-forget coroutines should use `drogon::async_run(...)` so they're driven to completion." },
+
+        { type: "heading", text: "3. Silent 404s from missing registration" },
+        { type: "p", text: "Controllers self-register, but only if the registration macros are present *and* the translation unit is compiled and linked. Forget the `METHOD_LIST_BEGIN/END` block, forget to add the `.cc` to CMake, or mistype the path, and the route simply doesn't exist — the request 404s with no error at build time." },
+        { type: "code", lang: "cpp", code: "class User : public drogon::HttpController<User> {\n  public:\n    METHOD_LIST_BEGIN                                  // REQUIRED — omit it and every route is a 404\n    ADD_METHOD_TO(User::getInfo, \"/user/{id}/info\", Get);\n    METHOD_LIST_END\n\n    void getInfo(const HttpRequestPtr &req,\n                 std::function<void(const HttpResponsePtr &)> &&callback,\n                 int userId) const;\n};" },
+        { type: "code", lang: "cmake", code: "# The controller's .cc MUST be compiled in, or the self-registration never runs\naux_source_directory(controllers CTL_SRC)\ntarget_sources(my_app PRIVATE \${CTL_SRC})\n# Static libs are worse: the linker may drop \"unused\" controller objects.\n# Force them in with --whole-archive (GCC/Clang) or /WHOLEARCHIVE (MSVC).\ntarget_link_options(my_app PRIVATE LINKER:--whole-archive)" },
+        { type: "callout", variant: "gotcha", text: "**Fix:** every route needs its `ADD_METHOD_TO`/`METHOD_ADD` inside a `METHOD_LIST_BEGIN/END` block, and the controller's `.cc` must actually be compiled into the binary (add it to CMake). If routes vanish when you move controllers into a **static library**, the linker garbage-collected the unreferenced registration objects — link the controller lib with `--whole-archive`. Dump the live route table at startup with `drogon_ctl` / `app().getHandlersInfo()` to confirm what registered. Controllers are **singletons** — don't store per-request state in members." },
+
+        { type: "heading", text: "4. Dangling captures & callback lifetime" },
+        { type: "p", text: "In the classic (non-coroutine) API you reply by invoking a `callback`, often from *inside* an async completion that runs later. Capturing a **reference** to something owned by the current stack frame — or to the `callback` itself by reference — means it's gone by the time the async op completes." },
+        { type: "code", lang: "cpp", code: "// WRONG — captures the callback by reference; the frame is gone when the query finishes\nvoid bad(const HttpRequestPtr &req,\n         std::function<void(const HttpResponsePtr &)> &&cb) {\n    auto db = app().getDbClient();\n    db->execSqlAsync(\"SELECT 1\",\n        [&cb](const orm::Result &r){ cb(HttpResponse::newHttpResponse()); },  // &cb dangles\n        [](const orm::DrogonDbException &){});\n}\n\n// RIGHT — move the callback INTO the lambda; capture request by value (shared_ptr)\nvoid good(const HttpRequestPtr &req,\n          std::function<void(const HttpResponsePtr &)> &&cb) {\n    auto db = app().getDbClient();\n    db->execSqlAsync(\"SELECT 1\",\n        [cb = std::move(cb)](const orm::Result &r){        // callback owned by the lambda\n            cb(HttpResponse::newHttpJsonResponse(Json::Value{}));\n        },\n        [cb](const orm::DrogonDbException &e){             // error path must reply too\n            auto resp = HttpResponse::newHttpResponse();\n            resp->setStatusCode(k500InternalServerError);\n            cb(resp);\n        });\n}" },
+        { type: "callout", variant: "gotcha", text: "**Fix:** move the `callback` into the async lambda (`[cb = std::move(cb)]`) so it outlives the handler frame, and capture the `HttpRequestPtr` **by value** — it's a `shared_ptr`, so it stays alive as long as the lambda does. Never capture local references or `string_view`s into the body across an async boundary. And make sure **every** path (including the error callback) invokes the callback exactly once — forgetting it leaks the connection until it times out." },
+
+        { type: "heading", text: "5. Config & build wiring" },
+        { type: "p", text: "Two config/build details bite newcomers: `threads_num` *is* the number of event loops (get it wrong and you either under-use cores or oversubscribe them), and the `drogon_ctl` codegen must be re-run after schema or view changes so the generated C++ matches reality." },
+        { type: "code", lang: "json", code: "{\n  \"app\": {\n    \"threads_num\": 0,          // 0 = one event loop per hardware core (usual prod value)\n    \"document_root\": \"./static\"\n  },\n  \"db_clients\": [\n    { \"name\": \"default\", \"rdbms\": \"postgresql\", \"host\": \"127.0.0.1\",\n      \"port\": 5432, \"dbname\": \"mydb\", \"user\": \"pg\", \"passwd\": \"secret\",\n      \"connection_number\": 4, \"is_fast\": false }\n  ]\n}" },
+        { type: "code", lang: "bash", code: "# Re-run codegen after ANY schema change, then rebuild\ndrogon_ctl create model ./models     # models are generated from the LIVE db\n# ...and after editing .csp views, let CMake's drogon_create_views regenerate them\ncmake --build build\n\n# 'drogon_ctl not found' after install? the bin dir isn't on PATH,\n# or the shared lib cache is stale:\nsudo ldconfig" },
+        { type: "callout", variant: "gotcha", text: "**Fix:** set `threads_num` to `0` (one loop per core) for production; remember each loop is single-threaded, so \"add more threads\" does not rescue a blocking handler — fix the blocking first. Re-run `drogon_ctl create model` after every `ALTER TABLE` (Drogon has no migrations — models drift silently from the schema otherwise) and let CMake regenerate `.csp` views. If `drogon_ctl` isn't found post-install, its `bin` dir isn't on `PATH` or the loader cache is stale (`sudo ldconfig`). A `getDbClient()` returning null means no matching `db_clients` entry in `config.json`." }
+      ]
     }
   ],
 
@@ -279,7 +314,10 @@
     "**Uploads over `client_max_body_size`** are rejected before your handler runs — raise it (and `upload_path`) in `config.json` for large files, and stream big responses via `newFileResponse`/`newStreamResponse`.",
     "A **filter passes data to the handler** through `req->attributes()`, not by mutating the (immutable) request. When verifying JWTs, always pin the algorithm and check expiry.",
     "Responses are `shared_ptr` and some are cached by the framework — don't mutate a response after passing it to `callback`.",
-    "`getDbClient()` returns nullptr if no `db_clients` entry matches the name — always configure the client before using `Mapper`."
+    "`getDbClient()` returns nullptr if no `db_clients` entry matches the name — always configure the client before using `Mapper`.",
+    "**Missing registration = silent 404:** a route needs `ADD_METHOD_TO`/`METHOD_ADD` inside `METHOD_LIST_BEGIN/END`, and the controller's `.cc` must be compiled into the binary. If controllers live in a **static library**, link it with `--whole-archive` or the linker drops the self-registration objects.",
+    "**Async callback lifetime:** in the classic API, move the `callback` into the async lambda (`[cb = std::move(cb)]`) and capture the request by value (`shared_ptr`) — capturing either by reference dangles once the handler frame returns. Reply on **every** path (including the error callback) exactly once, or the connection leaks until timeout.",
+    "`threads_num` *is* the number of event loops; since each loop is single-threaded, adding threads does **not** fix a blocking handler — remove the blocking call first."
   ],
 
   flashcards: [
@@ -295,7 +333,9 @@
     { q: "How do you register a WebSocket endpoint?", a: "Inherit `WebSocketController<T>`, override `handleNewMessage/handleNewConnection/handleConnectionClosed`, and map the path with `WS_PATH_ADD(\"/ws\", Get)` inside `WS_PATH_LIST_BEGIN/END`." },
     { q: "What's the difference between a filter and an AOP advice?", a: "A **filter** is *per-route* middleware attached by class name (auth/validation for specific endpoints). An **advice** (`registerPreRoutingAdvice`/`registerPostHandlingAdvice`) is a *global* lifecycle hook registered once on `app()` for every request." },
     { q: "How do you handle a multipart file upload?", a: "Use `MultiPartParser`: `parser.parse(req)`, then `getFiles()` gives `HttpFile`s (`saveAs(path)`, `fileContent()`, `getContentType()`) and `getParameters()` gives the non-file fields. Cap size with `client_max_body_size` in config." },
-    { q: "How does an auth filter pass the decoded user to the handler?", a: "Through the request **attributes** map: `req->attributes()->insert(\"user_id\", id)` in the filter, then `req->getAttributes()->get<...>(\"user_id\")` in the handler — the request body itself is immutable." }
+    { q: "How does an auth filter pass the decoded user to the handler?", a: "Through the request **attributes** map: `req->attributes()->insert(\"user_id\", id)` in the filter, then `req->getAttributes()->get<...>(\"user_id\")` in the handler — the request body itself is immutable." },
+    { q: "A route returns 404 even though the controller compiles — what are the two usual causes?", a: "Either the route macro is missing/outside the `METHOD_LIST_BEGIN/END` block, or the controller's `.cc` isn't compiled/linked so its self-registration never runs. In a **static library**, the linker drops the unreferenced registration objects — link with `--whole-archive`." },
+    { q: "In a classic (callback) handler, why does capturing the callback by reference in an async lambda crash, and what's the fix?", a: "The handler frame returns before the async op completes, so a captured reference dangles. **Move** the callback into the lambda (`[cb = std::move(cb)]`) and capture the `HttpRequestPtr` by value (it's a `shared_ptr`). Reply on every path, including the error callback." }
   ],
 
   cheatsheet: [
@@ -310,6 +350,8 @@
     { label: "Save upload", code: "MultiPartParser p; p.parse(req); p.getFiles()[0].saveAs(path);" },
     { label: "File download", code: "HttpResponse::newFileResponse(path, name, CT_APPLICATION_PDF);" },
     { label: "Filter -> handler", code: "req->attributes()->insert(\"user_id\", id);" },
-    { label: "CMake link", code: "target_link_libraries(app PRIVATE Drogon::Drogon)" }
+    { label: "CMake link", code: "target_link_libraries(app PRIVATE Drogon::Drogon)" },
+    { label: "Own callback in async", code: "db->execSqlAsync(sql, [cb = std::move(cb)](auto &r){ cb(resp); }, errCb);" },
+    { label: "Offload blocking work", code: "loop->queueInLoop([cb = std::move(cb)]{ cb(heavyResp()); });" }
   ]
 });

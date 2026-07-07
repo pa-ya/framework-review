@@ -4,7 +4,7 @@
   language: "Rust · Solana",
   tagline: "The **Rust framework for Solana on-chain programs** — macros that turn account validation, (de)serialization and IDL/client generation into boilerplate you don't write.",
   color: "#9945FF",
-  readMinutes: 20,
+  readMinutes: 23,
   group: "Rust",
 
   sections: [
@@ -247,6 +247,29 @@
         { type: "link", url: "https://github.com/coral-xyz/sealevel-attacks", text: "sealevel-attacks — worked examples of Solana/Anchor vulnerabilities (insecure vs secure)" },
         { type: "link", url: "https://solana.com/developers/courses/program-security", text: "Solana Foundation — Program Security course (signer, owner, reinit, PDA sharing)" }
       ]
+    },
+    {
+      id: "common-headaches",
+      title: "Common headaches & how to handle them",
+      level: "core",
+      body: [
+        { type: "p", text: "Beyond security, these are the operational and Rust-specific frictions that eat an Anchor beginner's time. The runtime is unusually constrained (tiny compute budget, small stack, no dynamic sizing), and the borrow checker collides with the `ctx.accounts` pattern in ways that don't happen in normal Rust." },
+        { type: "heading", text: "1. Borrow-checker fights with ctx.accounts" },
+        { type: "p", text: "You can't take two mutable borrows of `ctx.accounts` at once, and you can't hold an immutable borrow (a read) while mutating. The fix is to pull values out into locals first, then mutate — or scope the borrows." },
+        { type: "code", lang: "rust", code: "pub fn transfer_internal(ctx: Context<Move>, amount: u64) -> Result<()> {\n    // WRONG: cannot borrow `ctx.accounts.from` and `.to` both mutably in one expression\n    // ctx.accounts.from.balance -= amount;  ctx.accounts.to.balance += amount;  // borrow clash risk\n\n    // RIGHT: read into locals, compute, then write back\n    let from = &mut ctx.accounts.from;\n    from.balance = from.balance.checked_sub(amount).ok_or(MyError::Overflow)?;\n    let to = &mut ctx.accounts.to;\n    to.balance = to.balance.checked_add(amount).ok_or(MyError::Overflow)?;\n    Ok(())\n}" },
+        { type: "callout", variant: "gotcha", text: "After a **CPI** mutates one of your accounts (e.g. a token transfer changes a balance), your in-scope deserialized copy is **stale**. Call `ctx.accounts.token_acct.reload()?` before reading the post-CPI value, or you'll act on the old data." },
+        { type: "heading", text: "2. Compute budget & stack/heap limits" },
+        { type: "list", items: [
+          "An instruction gets ~**200k compute units** by default (max 1.4M, requestable via a `ComputeBudget` instruction from the client). Tight loops, big (de)serialization, and expensive CPIs blow it — you get `exceeded CUs`. Profile with the CU counts in the program logs.",
+          "The BPF **stack frame is ~4KB**. Large structs/arrays on the stack overflow it (`Access violation`); `Box<Account<..>>` moves the account to the heap, and large local buffers should be heap-allocated.",
+          "The heap is a fixed **32KB** per instruction — no unbounded `Vec` growth.",
+          "**Transaction size is ~1232 bytes** total: too many accounts or too much instruction data won't fit. Use lookup tables (ALTs) for many accounts, or split across instructions."
+        ] },
+        { type: "code", lang: "rust", code: "// large accounts on the stack overflow the 4KB frame -> Box them onto the heap\n#[derive(Accounts)]\npub struct Heavy<'info> {\n    #[account(mut)]\n    pub big: Box<Account<'info, BigState>>,   // Box = lives on heap, not the stack\n}" },
+        { type: "heading", text: "3. Build / version / IDL friction" },
+        { type: "callout", variant: "warn", text: "Most \"it won't build/deploy\" pain is version skew: the `anchor-cli`, the `anchor-lang` crate, the Solana toolchain, and `@coral-xyz/anchor` must be compatible. Pin them (`avm use <ver>`, `[toolchain] anchor_version` in Anchor.toml), and after changing account layouts rebuild **and** regenerate the IDL/TS types — a stale IDL makes the client deserialize garbage." },
+        { type: "callout", variant: "tip", text: "Fast feedback loop: `anchor test --skip-local-validator` against a running `solana-test-validator`, and pure-Rust logic tests via `litesvm` — a full `anchor test` redeploys every run and is slow to iterate on." }
+      ]
     }
   ],
 
@@ -269,7 +292,10 @@
     "`AccountInfo` / `UncheckedAccount` skip **all** checks — you must verify owner/key/signer yourself; each needs a `/// CHECK:` justifying it.",
     "Missing `mut` — writes to an account without `#[account(mut)]` are silently dropped / rejected at runtime.",
     "`declare_id!` not matching the deployed keypair → `DeclaredProgramIdMismatch`. Run `anchor keys sync`.",
-    "Not marking the authority as `Signer` (or via `has_one`) — a missing signer check lets anyone invoke privileged instructions."
+    "Not marking the authority as `Signer` (or via `has_one`) — a missing signer check lets anyone invoke privileged instructions.",
+    "A deserialized account is **stale after a CPI** mutates it — call `.reload()?` before reading the post-CPI value.",
+    "Large accounts/buffers on the ~4KB BPF stack cause an access violation — `Box<Account<..>>` moves them to the heap.",
+    "Exceeding the ~200k compute-unit budget (tight loops/big serialization) fails the instruction — request more CUs client-side or optimize."
   ],
 
   flashcards: [
@@ -282,7 +308,9 @@
     { q: "Why is `init_if_needed` risky?", a: "If the account already exists the handler still runs, so it can reset live state; combined with `close` it enables reinitialization/revival attacks. Use plain `init` or add an explicit `initialized` guard." },
     { q: "What does the `close = dest` constraint do?", a: "Sends the account's lamports to `dest`, zeroes its data, and sets the closed discriminator — safely retiring the account and reclaiming rent." },
     { q: "Where do Anchor custom error codes start, and how do you raise them?", a: "At **6000** (below that is reserved). Define with `#[error_code]`, raise with `require!(cond, MyError::X)` or `err!(MyError::X)`." },
-    { q: "What is the IDL and what does it enable?", a: "A JSON interface description generated by `anchor build`; the `@coral-xyz/anchor` TS client reads it to call instructions by name with types and auto-deserialize accounts." }
+    { q: "What is the IDL and what does it enable?", a: "A JSON interface description generated by `anchor build`; the `@coral-xyz/anchor` TS client reads it to call instructions by name with types and auto-deserialize accounts." },
+    { q: "Why is an account 'stale' after a CPI, and how do you fix it?", a: "Your deserialized copy in `ctx.accounts` isn't automatically refreshed when a CPI mutates the on-chain account. Call `ctx.accounts.x.reload()?` before reading the post-CPI value." },
+    { q: "Why `Box` an Anchor account, and what limits force it?", a: "The BPF stack frame is only ~4KB; a large `Account<T>` on the stack overflows it. `Box<Account<T>>` moves it to the heap. Also mind ~200k compute units and the ~1232-byte transaction size." }
   ],
 
   cheatsheet: [

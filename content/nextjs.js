@@ -4,7 +4,7 @@
   language: "React / TS",
   tagline: "Full-stack React framework with **file-based routing**, **Server Components**, route handlers, and server actions. This deck focuses on the **App Router**.",
   color: "#ededed",
-  readMinutes: 19,
+  readMinutes: 22,
   group: "TypeScript",
 
   sections: [
@@ -119,7 +119,7 @@
           "**ISR:** static + periodic `revalidate` — best of both.",
           "**Streaming:** wrap slow parts in `<Suspense>` (or use `loading.tsx`) to stream HTML progressively."
         ] },
-        { type: "code", lang: "tsx", code: "// pre-generate dynamic routes at build time\nexport async function generateStaticParams() {\n  const posts = await getPosts();\n  return posts.map(p => ({ slug: p.slug }));\n}" }
+        { type: "code", lang: "tsx", code: "// app/blog/[slug]/page.tsx\n// Pre-render every post as static HTML at build time (SSG) instead of on demand.\nexport async function generateStaticParams() {\n  const posts = await getPosts();\n  // Returned keys MUST match the dynamic segment name(s) — here, [slug].\n  return posts.map((p) => ({ slug: p.slug }));\n}\n\n// Optional: turn SSG into ISR — rebuild each page in the background hourly.\nexport const revalidate = 3600;\n\n// A slug not returned above is rendered on first request, then cached.\nexport const dynamicParams = true;" }
       ]
     },
     {
@@ -157,7 +157,7 @@
       title: "Metadata, images, fonts & env",
       level: "deep",
       body: [
-        { type: "code", lang: "tsx", code: "// static or dynamic SEO metadata\nexport const metadata = { title: 'My App', description: '…' };\n// or:\nexport async function generateMetadata({ params }) {\n  const { slug } = await params;\n  return { title: `Post ${slug}` };\n}" },
+        { type: "code", lang: "tsx", code: "// app/blog/[slug]/page.tsx — export ONE of these, not both, per file.\n\n// Static: values known at build time.\nexport const metadata = { title: 'My App', description: 'Built with Next.js' };\n\n// Dynamic: depends on route params/data.\nexport async function generateMetadata({ params }: { params: Promise<{ slug: string }> }) {\n  const { slug } = await params;\n  const post = await getPost(slug);\n  return {\n    title: `\${post.title} · My Blog`,\n    description: post.excerpt,\n    openGraph: { images: [post.cover] },   // rich link previews\n  };\n}" },
         { type: "list", items: [
           "`next/image` — automatic optimization, lazy loading, layout-shift prevention.",
           "`next/font` — self-host Google/local fonts with zero layout shift.",
@@ -179,6 +179,59 @@
           ["Server Actions", "manual API routes + client fetch"]
         ] },
         { type: "code", lang: "tsx", code: "// pages router data fetching\nexport async function getServerSideProps(ctx) {\n  const data = await getData();\n  return { props: { data } };   // passed to the page component\n}" }
+      ]
+    },
+    {
+      id: "headaches",
+      title: "Common headaches & how to handle them",
+      level: "deep",
+      body: [
+        { type: "p", text: "The App Router is powerful but the failure modes are unintuitive. These are the ones that bite everyone — with the fix for each." },
+
+        { type: "heading", text: "1. The Server → Client boundary" },
+        { type: "p", text: "Server Components serialize the props they hand to Client Components (like an RPC). **Functions, class instances, `Date` map/set internals, symbols — anything non-serializable — cannot cross the boundary.** Hooks, `onClick`, and browser APIs only exist on the client side." },
+        { type: "code", lang: "tsx", code: "// ❌ Server Component passing a function + a Map to a client child -> runtime error\n// app/page.tsx  (Server Component, the default)\nexport default function Page() {\n  return <Chart onPick={() => alert('hi')} data={new Map()} />;  // not serializable\n}\n\n// ✅ Pass plain serializable data; put behavior INSIDE the client component\n// components/chart.tsx\n'use client';\nexport function Chart({ points }: { points: number[] }) {\n  return <button onClick={() => console.log(points)}>{points.length} pts</button>;\n}" },
+        { type: "callout", variant: "gotcha", text: "\"Functions cannot be passed directly to Client Components\" means you handed a callback across the boundary. Move the handler into the client component, or pass a **Server Action** (those are allowed to cross)." },
+        { type: "callout", variant: "tip", text: "Keep `\"use client\"` at the **leaves**. A Server Component can render a Client Component and pass Server-rendered UI through `children` — so a big static page can wrap a tiny interactive island without turning the whole tree into client JS." },
+
+        { type: "heading", text: "2. The caching model (the biggest surprise)" },
+        { type: "p", text: "Next layers several caches: **Request Memoization** (dedupes identical `fetch`es in one render), the **Data Cache** (persists `fetch` results across requests), and the **Full Route Cache** (the rendered HTML/RSC payload). Stale data almost always means one of these is holding on. Defaults shifted between versions — Next 13/14 cached `fetch` aggressively by default; **Next 15 made `fetch` and route handlers uncached by default** — so never rely on the default, state your intent." },
+        { type: "table", headers: ["Control", "Effect"], rows: [
+          ["`fetch(url, { cache: 'no-store' })`", "Never cache this request — always fresh (dynamic)"],
+          ["`fetch(url, { next: { revalidate: N } })`", "Cache, but refresh at most every N seconds (ISR)"],
+          ["`fetch(url, { next: { tags: ['posts'] } })`", "Tag the data so `revalidateTag('posts')` can purge it"],
+          ["`export const revalidate = N`", "Segment-wide ISR timer for the whole route"],
+          ["`export const dynamic = 'force-dynamic'`", "Render the route per request; disables the Full Route Cache"],
+          ["`export const dynamic = 'force-static'`", "Force static; dynamic APIs return empty instead of opting out"],
+          ["`revalidatePath('/posts')`", "After a mutation, purge the cached path"],
+          ["`revalidateTag('posts')`", "After a mutation, purge everything tagged `posts`"]
+        ] },
+        { type: "callout", variant: "gotcha", text: "After a Server Action writes data, the old page can still show — you must call `revalidatePath()` or `revalidateTag()` inside the action to bust the Data + Route caches. Reads won't magically know a write happened." },
+
+        { type: "heading", text: "3. Hydration mismatch errors" },
+        { type: "p", text: "The server-rendered HTML must match the client's first render exactly. Anything that differs between the two — `Date.now()`, `Math.random()`, `window`/`localStorage`, `Intl`/locale-dependent formatting, or a browser extension mutating the DOM — throws \"Hydration failed / text content did not match.\"" },
+        { type: "code", lang: "tsx", code: "'use client';\nimport { useEffect, useState } from 'react';\n\nexport function Clock() {\n  // ❌ new Date().toLocaleTimeString() would differ server vs client -> mismatch.\n  // ✅ Render a stable placeholder on the server; fill in AFTER mount.\n  const [now, setNow] = useState<string | null>(null);\n  useEffect(() => {\n    setNow(new Date().toLocaleTimeString());   // browser-only, runs post-hydration\n    const id = setInterval(() => setNow(new Date().toLocaleTimeString()), 1000);\n    return () => clearInterval(id);\n  }, []);\n  return <time suppressHydrationWarning>{now ?? '—'}</time>;\n}" },
+        { type: "callout", variant: "warn", text: "Fixes: guard browser-only reads behind `useEffect`/a `mounted` flag, or add `suppressHydrationWarning` for one-node, known-mismatch cases (e.g. a timestamp). Never read `window`/`localStorage` during render." },
+
+        { type: "heading", text: "4. Environment variables" },
+        { type: "callout", variant: "gotcha", text: "Only `NEXT_PUBLIC_`-prefixed vars reach the browser; every other var is **server-only**. Both kinds are **inlined at build time**, not read at runtime — so changing a value means rebuilding, and a `NEXT_PUBLIC_` var referenced in a Client Component ends up visible in the JS bundle. Keep secrets unprefixed and use them only in Server Components / route handlers / actions." },
+
+        { type: "heading", text: "5. Server Actions" },
+        { type: "p", text: "A Server Action must be `async` and marked `\"use server\"` (file-level or inline). It can be a form `action`; its arguments arrive **serialized** (FormData/JSON), so the same boundary rules apply. Do side effects like `revalidatePath`/`redirect` at the end." },
+        { type: "code", lang: "tsx", code: "'use server';\nimport { revalidatePath } from 'next/cache';\nimport { redirect } from 'next/navigation';\n\nexport async function deletePost(formData: FormData) {\n  const id = formData.get('id') as string;   // args are serialized, not live objects\n  await db.post.delete({ where: { id } });\n  revalidatePath('/posts');   // bust the cache so the list updates\n  redirect('/posts');         // navigate away after the mutation\n}" },
+        { type: "callout", variant: "warn", text: "`redirect()` works by throwing a special error — don't wrap it in a `try/catch` that swallows everything, or the redirect silently dies. Call it outside the `try`, or re-throw redirect errors." },
+
+        { type: "heading", text: "6. Route file conventions" },
+        { type: "p", text: "Each segment can define `layout` / `page` / `loading` / `error` / `not-found`. They compose predictably, but two catch people:" },
+        { type: "list", items: [
+          "**`error.tsx` must be a Client Component** (`\"use client\"`) — it receives `error` + a `reset()` function to retry the segment.",
+          "**`loading.tsx` is just a `<Suspense>` boundary** — it shows while the segment's Server Component awaits, then streams in the real UI.",
+          "`not-found.tsx` renders when you call `notFound()`; `global-error.tsx` catches errors in the **root** layout (which `error.tsx` cannot)."
+        ] },
+        { type: "code", lang: "tsx", code: "// app/dashboard/error.tsx\n'use client';   // REQUIRED — error boundaries are client-only\nexport default function Error({ error, reset }: { error: Error; reset: () => void }) {\n  return (\n    <div>\n      <p>Something broke: {error.message}</p>\n      <button onClick={() => reset()}>Try again</button>\n    </div>\n  );\n}" },
+
+        { type: "heading", text: "7. Dynamic APIs opt a route into dynamic rendering" },
+        { type: "callout", variant: "gotcha", text: "Touching `cookies()`, `headers()`, `draftMode()`, or reading `searchParams` makes the whole route **dynamic** (rendered per request) — it can no longer be statically cached. That's often the real reason a page you expected to be static is re-running every request. Push those reads down to the smallest component that needs them, or wrap that part in `<Suspense>` so the rest stays static." }
       ]
     }
   ],
@@ -202,7 +255,10 @@
     "Secrets leak if used in client components or prefixed `NEXT_PUBLIC_`; keep them server-side.",
     "A folder can have `page.tsx` OR `route.ts`, not both.",
     "Creating a `new PrismaClient()` per request in serverless exhausts connections — use a global singleton + pooler.",
-    "Middleware runs on the Edge runtime — no Node APIs or DB drivers there."
+    "Middleware runs on the Edge runtime — no Node APIs or DB drivers there.",
+    "You can't pass functions, class instances, or `Map`/`Set` from a Server Component to a Client Component — props are serialized. Pass plain data or a Server Action.",
+    "Hydration mismatches come from render-time `Date.now()`/`Math.random()`/`window`/locale formatting — move them into `useEffect` or add `suppressHydrationWarning`.",
+    "After a mutation, call `revalidatePath`/`revalidateTag` inside the Server Action — reads won't auto-refresh, and `error.tsx` must be a client component."
   ],
 
   flashcards: [
@@ -213,7 +269,9 @@
     { q: "How do you enable ISR for a fetch?", a: "`fetch(url, { next: { revalidate: N } })` — revalidate the cached result every N seconds." },
     { q: "What must you `await` in Next.js 15 that used to be sync?", a: "`params`, `searchParams`, and `cookies()`/`headers()` — they're now Promises." },
     { q: "Why keep `\"use client\"` at the leaves?", a: "Everything imported into a client component ships to the browser; leaf boundaries minimize the JS bundle." },
-    { q: "How do you avoid exhausting DB connections with Prisma in Next?", a: "Reuse a **global singleton** `PrismaClient` (not one per request) and use a connection pooler in serverless." }
+    { q: "How do you avoid exhausting DB connections with Prisma in Next?", a: "Reuse a **global singleton** `PrismaClient` (not one per request) and use a connection pooler in serverless." },
+    { q: "What causes a hydration mismatch and how do you fix it?", a: "Server and client first-render differ — e.g. `Date.now()`, `Math.random()`, `window`/`localStorage`, or locale formatting during render. Fix by reading in `useEffect`/behind a `mounted` flag, or `suppressHydrationWarning` for a known one-node case." },
+    { q: "Why is my page dynamic when I expected it to be static/cached?", a: "Reading `cookies()`, `headers()`, or `searchParams` (or `cache: 'no-store'` / `force-dynamic`) opts the route into per-request rendering. Push those reads into a small child or `<Suspense>` to keep the rest static." }
   ],
 
   cheatsheet: [
@@ -224,6 +282,8 @@
     { label: "Server action", code: "'use server' fn(formData)" },
     { label: "ISR fetch", code: "fetch(url,{next:{revalidate:60}})" },
     { label: "Revalidate", code: "revalidatePath('/x')" },
-    { label: "Middleware", code: "middleware.ts + matcher" }
+    { label: "Middleware", code: "middleware.ts + matcher" },
+    { label: "No cache", code: "fetch(url,{cache:'no-store'})" },
+    { label: "Force dynamic", code: "export const dynamic='force-dynamic'" }
   ]
 });

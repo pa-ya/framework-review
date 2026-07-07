@@ -5,7 +5,7 @@
   group: "Rust",
   tagline: "A **fullstack**, fine-grained reactive framework for the browser and the server — signals drive the DOM directly (no virtual DOM), and `#[server]` functions blur the client/server line.",
   color: "#e5397f",
-  readMinutes: 26,
+  readMinutes: 34,
 
   sections: [
     {
@@ -148,6 +148,59 @@
       ]
     },
     {
+      id: "backend-structure",
+      title: "Backend: structuring a fullstack app",
+      level: "core",
+      body: [
+        { type: "p", text: "Leptos is genuinely fullstack — the `#[server]` boundary is the *only* seam between client and server, and both sides live in **one crate compiled twice**. The mental discipline: shared types (structs, enums, `Params`) compile into **both** builds; anything server-only (DB, filesystem, secrets, native crates) must compile into **only** the `ssr` build, or it poisons the WASM bundle." },
+        { type: "code", lang: "text", code: "src/\n  lib.rs            // hydrate() entry (#[cfg(hydrate)]) + `mod` declarations\n  main.rs           // server entry (#[cfg(feature=\"ssr\")]) — Axum, DB pool, migrations\n  app.rs            // <App/>, <Routes>, the shell() — runs on BOTH sides\n  models.rs         // shared types: User, Todo, Params — compile into both builds\n  components/        // UI components (both sides)\n  server/            // server-only: db.rs, auth.rs — gate the module with cfg\n    mod.rs          // #![cfg(feature = \"ssr\")]  <- whole module is server-only\n  api.rs            // the #[server] functions (signature shared, body server-only)" },
+        { type: "code", lang: "rust", code: "// api.rs — the function SIGNATURE is shared; the BODY only compiles on the server\n#[server]\npub async fn list_todos() -> Result<Vec<Todo>, ServerFnError> {\n    // `use crate::server::db;` here is fine — this body is ssr-only\n    let todos = crate::server::db::all_todos().await?;\n    Ok(todos)          // Todo must be Serialize + Deserialize to cross the wire\n}" },
+        { type: "callout", variant: "gotcha", text: "The error you *will* hit on day one: importing a native-only crate (`sqlx`, `tokio::fs`, `jsonwebtoken`) at module top-level so it compiles into the `hydrate` (WASM) build → a wall of `wasm32-unknown-unknown` link errors. Fix: put that code behind `#[cfg(feature = \"ssr\")]` or *only* inside `#[server]` bodies. A whole server-only module can start with `#![cfg(feature = \"ssr\")]`." },
+        { type: "callout", variant: "tip", text: "Types that cross a server function (args + return) must be `Serialize + Deserialize` (serde). Keep them in a shared `models.rs` and derive both — that one struct is your API contract, checked by the compiler on both ends." }
+      ]
+    },
+    {
+      id: "server-state-extractors",
+      title: "Backend: app state, extractors & the request",
+      level: "core",
+      body: [
+        { type: "p", text: "Inside a `#[server]` body you're on the server, so you often need the DB pool, config, the incoming headers, or to set a response cookie. Two mechanisms: **provided context** (app state you inject once at startup) and **server extractors** (reach into the live Axum request)." },
+        { type: "heading", text: "1. Inject app state at startup, read it with expect_context" },
+        { type: "p", text: "Register your server routes *with a context closure* that provides your `AppState`. Every server function then reads it with `expect_context`." },
+        { type: "code", lang: "rust", code: "// main.rs (ssr) — clone-cheap state, provided into every server fn\n#[derive(Clone)]\nstruct AppState { pool: sqlx::PgPool, leptos_options: LeptosOptions }\n\nlet state = AppState { pool, leptos_options: options.clone() };\n\nlet app = Router::new()\n    .leptos_routes_with_context(\n        &options,\n        routes,\n        { let s = state.clone(); move || provide_context(s.clone()) }, // <- context\n        { let o = options.clone(); move || shell(o.clone()) },\n    )\n    .with_state(state);" },
+        { type: "code", lang: "rust", code: "// any server function can now pull it out\n#[server]\npub async fn count_users() -> Result<i64, ServerFnError> {\n    let state = expect_context::<AppState>();      // provided above\n    let n = sqlx::query_scalar!(\"SELECT count(*) FROM users\")\n        .fetch_one(&state.pool).await?;\n    Ok(n.unwrap_or(0))\n}" },
+        { type: "heading", text: "2. Server extractors: headers, cookies, setting responses" },
+        { type: "code", lang: "rust", code: "use leptos_axum::{extract, ResponseOptions};\nuse axum::http::{HeaderMap, header::SET_COOKIE, HeaderValue};\n\n#[server]\npub async fn who_am_i() -> Result<String, ServerFnError> {\n    // pull any Axum extractor out of the current request:\n    let headers: HeaderMap = extract().await?;\n    let ua = headers.get(\"user-agent\").and_then(|v| v.to_str().ok()).unwrap_or(\"?\");\n\n    // set a response header / cookie from a server fn via ResponseOptions:\n    let resp = expect_context::<ResponseOptions>();\n    resp.insert_header(SET_COOKIE, HeaderValue::from_str(\"seen=1; Path=/; HttpOnly\")?);\n    Ok(ua.to_string())\n}" },
+        { type: "callout", variant: "warn", text: "**Background work on the server:** a `#[server]` body runs on Axum's multithreaded Tokio runtime, so `tokio::spawn(async move { ... })` needs a `Send + 'static` future — **clone the pool/data into the task** (`let pool = state.pool.clone();`) rather than borrowing. For `!Send` client-side futures use Leptos's `spawn_local` / `Action::new_local` instead. Don't `tokio::spawn` in client code — it doesn't exist in WASM." },
+        { type: "callout", variant: "gotcha", text: "Server extractors must run **inside a server-fn body** (or an SSR context) — `extract()` reaches into the request that's in scope. It returns `Err` if you call it where there is no request (e.g. during a plain unit test with no server context)." }
+      ]
+    },
+    {
+      id: "backend-db",
+      title: "Backend: database access",
+      level: "core",
+      body: [
+        { type: "p", text: "There's no Leptos-specific ORM — you use the normal Rust stack (**SQLx**, SeaORM, Diesel) *inside server functions*. The pool is created once in `main.rs`, handed in as context (previous section), and every query lives behind the `#[server]` boundary so the driver never reaches WASM." },
+        { type: "code", lang: "rust", code: "// main.rs (ssr): build the pool + run migrations at startup\n#[cfg(feature = \"ssr\")]\n#[tokio::main]\nasync fn main() {\n    let pool = sqlx::PgPool::connect(&std::env::var(\"DATABASE_URL\").unwrap())\n        .await.expect(\"db\");\n    sqlx::migrate!().run(&pool).await.expect(\"migrations\");  // ./migrations/*.sql\n    // ... build Router with AppState { pool, .. } as shown above\n}" },
+        { type: "code", lang: "rust", code: "// api.rs: full CRUD as server functions\nuse crate::models::Todo;\n\n#[server]\npub async fn add_todo(title: String) -> Result<Todo, ServerFnError> {\n    let pool = expect_context::<AppState>().pool;\n    let row = sqlx::query_as!(Todo,\n        \"INSERT INTO todos (title, done) VALUES ($1, false) RETURNING id, title, done\",\n        title)\n        .fetch_one(&pool).await?;   // sqlx::Error -> ServerFnError via ? (From impl)\n    Ok(row)\n}\n\n#[server]\npub async fn toggle_todo(id: i64) -> Result<(), ServerFnError> {\n    let pool = expect_context::<AppState>().pool;\n    sqlx::query!(\"UPDATE todos SET done = NOT done WHERE id = $1\", id)\n        .execute(&pool).await?;\n    Ok(())\n}" },
+        { type: "code", lang: "rust", code: "// wiring it to the UI: a Resource reads, an Action writes, refetch on the action's version\nlet add = ServerAction::<AddTodo>::new();\nlet todos = Resource::new(move || add.version().get(), |_| async { list_todos().await });\n\nview! {\n    <ActionForm action=add>\n        <input name=\"title\"/> <button>\"Add\"</button>\n    </ActionForm>\n    <Suspense fallback=|| view!{ <p>\"…\"</p> }>\n        {move || todos.get().map(|res| res.map(|list| view! {\n            <For each=move || list.clone() key=|t| t.id let:t>\n                <li>{t.title}</li>\n            </For>\n        }))}\n    </Suspense>\n}" },
+        { type: "callout", variant: "tip", text: "`sqlx::query!`/`query_as!` check your SQL against a real database **at compile time** — set `DATABASE_URL` (or commit the offline cache with `cargo sqlx prepare`, since cargo-leptos builds twice and CI has no DB). This catches schema drift before you ship." },
+        { type: "callout", variant: "note", text: "The `add.version()`→`Resource` source is the idiomatic refetch trigger: the action bumps its version on success, the resource depends on it, so the list re-queries automatically after every mutation. No manual cache invalidation." }
+      ]
+    },
+    {
+      id: "backend-auth",
+      title: "Backend: authentication end-to-end",
+      level: "core",
+      body: [
+        { type: "p", text: "Auth in Leptos is server-function work plus a cookie. The pattern: a `login` server fn verifies the password and sets a session cookie via `ResponseOptions`; a `current_user` server fn reads the cookie back; routes gate on it with `<ProtectedRoute>`." },
+        { type: "code", lang: "rust", code: "use leptos_axum::{extract, ResponseOptions};\nuse axum::http::{HeaderMap, header::SET_COOKIE, HeaderValue};\n\n#[server]\npub async fn login(email: String, password: String) -> Result<(), ServerFnError> {\n    let pool = expect_context::<AppState>().pool;\n    let user = verify_credentials(&pool, &email, &password).await\n        .map_err(|_| ServerFnError::new(\"invalid credentials\"))?;\n\n    let token = create_session(&pool, user.id).await?;   // random id -> sessions table\n    let cookie = format!(\"session={token}; Path=/; HttpOnly; SameSite=Lax; Secure\");\n    expect_context::<ResponseOptions>()\n        .insert_header(SET_COOKIE, HeaderValue::from_str(&cookie)?);\n    Ok(())\n}\n\n#[server]\npub async fn current_user() -> Result<Option<User>, ServerFnError> {\n    let headers: HeaderMap = extract().await?;\n    let Some(token) = session_cookie(&headers) else { return Ok(None) };\n    let pool = expect_context::<AppState>().pool;\n    Ok(load_user_by_session(&pool, &token).await.ok())\n}\n\n#[server]\npub async fn logout() -> Result<(), ServerFnError> {\n    expect_context::<ResponseOptions>().insert_header(\n        SET_COOKIE,\n        HeaderValue::from_str(\"session=; Path=/; Max-Age=0\")?,   // clear it\n    );\n    Ok(())\n}" },
+        { type: "code", lang: "rust", code: "// gate routes on the auth resource. ProtectedRoute redirects when the condition is false.\nuse leptos_router::components::ProtectedRoute;\n\nlet user = Resource::new(|| (), |_| async { current_user().await });\n\nview! {\n    <Routes fallback=|| view!{ <p>\"404\"</p> }>\n        <Route path=path!(\"/login\") view=LoginPage/>\n        <ProtectedRoute\n            path=path!(\"/app\")\n            condition=move || user.get().map(|u| matches!(u, Ok(Some(_))))\n            redirect_path=|| \"/login\"\n            view=Dashboard\n        />\n    </Routes>\n}" },
+        { type: "callout", variant: "warn", text: "The router condition is **client-side UX only** — it hides the page, it does not secure data. Every protected `#[server]` function must **re-check the session itself** (call `current_user()` / verify the cookie at the top of the body). Never trust that the client didn't call the endpoint directly." },
+        { type: "callout", variant: "tip", text: "Don't hand-roll sessions if you'd rather not: the **`leptos_axum` + `axum-login`** (or `tower-sessions`) combo gives you a session store and an `AuthSession` extractor you can pull with `extract()` inside server fns. Set cookies `HttpOnly; Secure; SameSite=Lax` and store only an opaque session id, never the user object." }
+      ]
+    },
+    {
       id: "routing",
       title: "Routing (leptos_router)",
       level: "core",
@@ -245,7 +298,10 @@
     { name: "cargo-leptos", why: "build tool: dual SSR+hydrate compile, CSS/Tailwind, watch" },
     { name: "wasm-bindgen", why: "Rust <-> JS/DOM bindings for the hydrate build" },
     { name: "console_error_panic_hook", why: "surface Rust panics in the browser console" },
-    { name: "axum + tokio", why: "the server runtime under the SSR feature" }
+    { name: "axum + tokio", why: "the server runtime under the SSR feature" },
+    { name: "sqlx / sea-orm", why: "database access inside #[server] functions (ssr-only)" },
+    { name: "axum-login / tower-sessions", why: "session store + AuthSession extractor for server-side auth" },
+    { name: "http (HeaderMap, SET_COOKIE)", why: "read/set headers & cookies via ResponseOptions in server fns" }
   ],
 
   gotchas: [
@@ -258,7 +314,12 @@
     "Server-only crates/code must be behind `#[cfg(feature = \"ssr\")]` or inside a `#[server]` body, or they break the WASM (`hydrate`) build.",
     "Different `view!{}` branches in an `if/else` are different types — call `.into_any()` (or use `<Show>`) to unify them.",
     "`<Routes>` now **requires** a `fallback`, and routes use `path!(\"/x/:id\")`. Old 0.6 `create_*`/router syntax won't compile on 0.7+.",
-    "Server-fn args and resource data must be `Serialize`/`Deserialize` (and usually `Send`); `!Send` futures need `LocalResource`/`Action::new_local`/`spawn_local`."
+    "Server-fn args and resource data must be `Serialize`/`Deserialize` (and usually `Send`); `!Send` futures need `LocalResource`/`Action::new_local`/`spawn_local`.",
+    "**Server-only crates in the WASM build:** importing `sqlx`/`tokio::fs`/`jsonwebtoken` at module top-level compiles it into `hydrate` → wasm32 link errors. Gate with `#[cfg(feature = \"ssr\")]` or keep it inside `#[server]` bodies.",
+    "Get app state (DB pool) into server fns by registering routes with `leptos_routes_with_context` + `provide_context`, then `expect_context::<AppState>()` inside the body — a plain global won't be there on every request.",
+    "`tokio::spawn` in a server fn needs a `Send + 'static` future: **clone** the pool/data into the task, don't borrow. `tokio::spawn` doesn't exist in WASM — client-side background work uses `spawn_local`.",
+    "A `<ProtectedRoute>` condition is client-side UX only; it does **not** secure data. Re-check the session inside every protected `#[server]` function body.",
+    "Server extractors (`leptos_axum::extract()`, `ResponseOptions`) only work inside a server-fn/SSR context — they read the in-scope request and `Err`/panic where there is none."
   ],
 
   flashcards: [
@@ -271,7 +332,13 @@
     { q: "How is a fullstack Leptos app built?", a: "One crate compiled **twice**: the server (`ssr` feature, Axum/Actix binary) and the WASM client (`hydrate` feature). `cargo-leptos` orchestrates both; `cargo leptos watch` for dev." },
     { q: "What are islands?", a: "A mode (`islands` feature) where most components render to static HTML with no JS, and only `#[island]`-marked components ship WASM and become interactive — much smaller bundles." },
     { q: "Why might a view not update when a signal changes?", a: "The read isn't in a reactive context. `{count.get()}` reads once; use `{count}` or `{move || count.get()}` so the node subscribes. Reactivity only tracks reads inside effects/memos/view closures." },
-    { q: "How do you share state without prop-drilling?", a: "`provide_context(value)` near the root and `use_context::<T>()`/`expect_context::<T>()` below — provide a `Copy` signal. For fine-grained nested state, `#[derive(Store)]` from `reactive_stores`." }
+    { q: "How do you share state without prop-drilling?", a: "`provide_context(value)` near the root and `use_context::<T>()`/`expect_context::<T>()` below — provide a `Copy` signal. For fine-grained nested state, `#[derive(Store)]` from `reactive_stores`." },
+    { q: "How does a server function get the DB pool / app state?", a: "Register routes with `leptos_routes_with_context` and a `provide_context(state)` closure at startup; inside the `#[server]` body pull it out with `expect_context::<AppState>()`. Build the pool once in `main.rs`." },
+    { q: "How do you read request headers or set a cookie from a server function?", a: "`leptos_axum::extract::<HeaderMap>().await?` reads any Axum extractor from the current request; `expect_context::<ResponseOptions>().insert_header(SET_COOKIE, ..)` sets response headers/cookies." },
+    { q: "Where does database code live in a fullstack Leptos app?", a: "Only inside `#[server]` function bodies (or `#[cfg(feature=\"ssr\")]` modules) — the driver must never compile into the WASM `hydrate` build. Shared types go in a `models.rs` derived `Serialize + Deserialize`." },
+    { q: "Is a <ProtectedRoute> enough to secure a page's data?", a: "No — it's client-side UX (hides/redirects the view). Every protected `#[server]` function must re-verify the session in its own body; the endpoint can be called directly." },
+    { q: "How do you refetch data after a mutation?", a: "Make the `Resource`'s source depend on the action's `version()`: `Resource::new(move || action.version().get(), ...)`. The action bumps its version on success, so the resource re-queries automatically." },
+    { q: "How do you spawn background work on the Leptos server safely?", a: "`tokio::spawn` needs a `Send + 'static` future — clone the pool/data into the task rather than borrowing. On the client (WASM) there is no `tokio::spawn`; use `spawn_local` / `Action::new_local` for `!Send` work." }
   ],
 
   cheatsheet: [
@@ -285,6 +352,11 @@
     { label: "Suspense", code: "<Suspense fallback=|| view!{..}>{move || r.get()}</Suspense>" },
     { label: "Route", code: "<Route path=path!(\"/users/:id\") view=User/>" },
     { label: "Params", code: "let p = use_params_map(); p.read().get(\"id\")" },
-    { label: "Context", code: "provide_context(x); expect_context::<T>()" }
+    { label: "Context", code: "provide_context(x); expect_context::<T>()" },
+    { label: "State in server fn", code: "let s = expect_context::<AppState>();" },
+    { label: "Provide state", code: "leptos_routes_with_context(&o, r, move||provide_context(s.clone()), ..)" },
+    { label: "Server extractor", code: "let h: HeaderMap = extract().await?;" },
+    { label: "Set cookie", code: "expect_context::<ResponseOptions>().insert_header(SET_COOKIE, ..)" },
+    { label: "Migrations", code: "sqlx::migrate!().run(&pool).await?" }
   ]
 });

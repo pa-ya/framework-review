@@ -4,7 +4,7 @@
   language: "TypeScript",
   tagline: "Opinionated, **Angular-inspired** Node framework: modules, DI, and decorators with a full request lifecycle (guards, interceptors, pipes, filters).",
   color: "#e0234e",
-  readMinutes: 18,
+  readMinutes: 21,
   group: "TypeScript",
 
   sections: [
@@ -158,7 +158,9 @@
       level: "deep",
       body: [
         { type: "code", lang: "bash", code: "npm i @nestjs/swagger" },
-        { type: "code", lang: "ts", code: "const config = new DocumentBuilder().setTitle('API').setVersion('1.0').addBearerAuth().build();\nconst doc = SwaggerModule.createDocument(app, config);\nSwaggerModule.setup('docs', app, doc);\n// decorate DTOs with @ApiProperty() for rich schemas" }
+        { type: "code", lang: "ts", code: "// main.ts — build the OpenAPI spec and mount Swagger UI\nimport { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';\n\nconst config = new DocumentBuilder()\n  .setTitle('API')\n  .setVersion('1.0')\n  .addBearerAuth()                 // adds an \"Authorize\" button for JWT\n  .build();\nconst document = SwaggerModule.createDocument(app, config);\nSwaggerModule.setup('docs', app, document);   // interactive UI at GET /docs" },
+        { type: "code", lang: "ts", code: "// create-user.dto.ts — decorate DTOs so schemas + examples render\nimport { ApiProperty } from '@nestjs/swagger';\n\nexport class CreateUserDto {\n  @ApiProperty({ example: 'ada@example.com' })\n  email: string;\n\n  @ApiProperty({ example: 'Ada', minLength: 1 })\n  name: string;\n}" },
+        { type: "callout", variant: "tip", text: "Add the `@nestjs/swagger` CLI plugin in `nest-cli.json` (`\"plugins\": [\"@nestjs/swagger\"]`) and it infers `@ApiProperty()` from your types automatically — no manual annotation needed." }
       ]
     },
     {
@@ -195,6 +197,59 @@
         ] },
         { type: "link", url: "https://docs.nestjs.com/fundamentals/injection-scopes", text: "Nest docs — injection scopes (when REQUEST scope bites you)" }
       ]
+    },
+    {
+      id: "headaches",
+      title: "Common headaches & how to handle them",
+      level: "deep",
+      body: [
+        { type: "p", text: "Nest's DI and lifecycle are powerful but produce a handful of famously confusing errors. Here are the ones you'll actually hit, and how to fix them." },
+
+        { type: "heading", text: "\"Nest can't resolve dependencies of X (?)\"" },
+        { type: "p", text: "The `(?)` marks the exact constructor argument Nest couldn't provide. The **module encapsulation rule**: a provider is private to its module unless you `exports` it, and you can only inject it elsewhere if you `imports` the module that exports it. So this error means one of: it isn't in any `providers`, it's provided but not `exports`ed, or the consuming module never `imports` the owner." },
+        { type: "code", lang: "text", code: "Nest can't resolve dependencies of the OrdersService (?).\nPlease make sure that the argument UsersService at index [0] is\navailable in the OrdersModule context." },
+        { type: "code", lang: "ts", code: "// users.module.ts — the OWNER must leak the provider\n@Module({\n  providers: [UsersService],\n  exports: [UsersService],      // <-- without this it stays private\n})\nexport class UsersModule {}\n\n// orders.module.ts — the CONSUMER must import the owner\n@Module({\n  imports: [UsersModule],       // <-- brings in whatever UsersModule exports\n  providers: [OrdersService],   // can now inject UsersService\n})\nexport class OrdersModule {}" },
+        { type: "callout", variant: "gotcha", text: "Re-`providers`ing the same class in two modules gives you **two separate instances** (two singletons), not a shared one. To share state, provide it once and `exports` it — don't copy it into `providers` everywhere." },
+
+        { type: "heading", text: "Circular dependencies" },
+        { type: "p", text: "When A needs B and B needs A, Nest can't decide which to construct first — you get an error or a silently `undefined` injected dependency. The escape hatch is `forwardRef()` on **both** sides; the real fix is to break the cycle (extract the shared logic into a third provider/module)." },
+        { type: "code", lang: "ts", code: "// a.service.ts\n@Injectable()\nexport class AService {\n  constructor(@Inject(forwardRef(() => BService)) private b: BService) {}\n}\n\n// b.service.ts\n@Injectable()\nexport class BService {\n  constructor(@Inject(forwardRef(() => AService)) private a: AService) {}\n}\n\n// module-level cycles need forwardRef in imports on both modules:\n@Module({ imports: [forwardRef(() => BModule)] })\nexport class AModule {}" },
+        { type: "callout", variant: "warn", text: "`forwardRef()` is a code smell, not a solution. If A and B call each other, extract the shared piece into a `CommonModule` both depend on — the cycle disappears and testing gets easier." },
+
+        { type: "heading", text: "Injection scopes bubble up" },
+        { type: "p", text: "Providers are **singletons** by default (one instance for the app's lifetime). Marking one `Scope.REQUEST` makes it per-request — but the cost is contagious: any provider that injects a request-scoped provider becomes request-scoped too, and so does the controller above it. The whole chain is re-instantiated on every request." },
+        { type: "code", lang: "ts", code: "@Injectable({ scope: Scope.REQUEST })\nexport class RequestContext { /* holds per-request data */ }\n\n// OrdersService is now EFFECTIVELY request-scoped via bubbling,\n// even though it isn't annotated — and so is any controller that injects it.\n@Injectable()\nexport class OrdersService {\n  constructor(private ctx: RequestContext) {}\n}" },
+        { type: "callout", variant: "tip", text: "Use `Scope.REQUEST` sparingly. For per-request data prefer `AsyncLocalStorage` (via `nestjs-cls`) or just pass the request object — you keep singleton performance. Note: request-scoped providers also can't be injected into other request-scoped-incompatible spots like a `Scope.DEFAULT` cron handler cleanly." },
+
+        { type: "heading", text: "Validation & serialization must be wired up" },
+        { type: "p", text: "`ValidationPipe` and `@Exclude()` do **nothing** until you register them. Validation needs the pipe registered globally *and* `class-validator`/`class-transformer` installed; hiding fields needs `ClassSerializerInterceptor`." },
+        { type: "code", lang: "ts", code: "// Option A — main.ts (simple, but not DI-aware)\napp.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));\n\n// Option B — app.module.ts (DI-friendly, testable, overridable per module)\nimport { APP_PIPE, APP_INTERCEPTOR } from '@nestjs/core';\n@Module({\n  providers: [\n    { provide: APP_PIPE, useClass: ValidationPipe },\n    // needed for @Exclude()/@Expose() to take effect on responses:\n    { provide: APP_INTERCEPTOR, useClass: ClassSerializerInterceptor },\n  ],\n})\nexport class AppModule {}" },
+        { type: "code", lang: "ts", code: "// user.entity.ts — @Exclude only works when ClassSerializerInterceptor runs\nimport { Exclude } from 'class-transformer';\nexport class User {\n  id: number;\n  email: string;\n  @Exclude() password: string;   // stripped from JSON responses\n}" },
+        { type: "callout", variant: "gotcha", text: "`ClassSerializerInterceptor` only transforms **class instances**. If you return a plain object (or a raw TypeORM/Prisma result that isn't the decorated class), `@Exclude()` is ignored and the password leaks. Return `new User(...)` / `plainToInstance(User, row)`." },
+
+        { type: "heading", text: "Async config & ordering" },
+        { type: "p", text: "`ConfigModule.forRoot({ isGlobal: true })` makes `ConfigService` available everywhere without re-importing. When another module needs config values **at setup time** (like a DB URL), use `forRootAsync` with `useFactory` + `inject` so the factory runs after `ConfigService` exists." },
+        { type: "code", lang: "ts", code: "@Module({\n  imports: [\n    ConfigModule.forRoot({ isGlobal: true }),   // load .env once, app-wide\n    // forRootAsync: the factory runs AFTER ConfigService is ready\n    TypeOrmModule.forRootAsync({\n      inject: [ConfigService],\n      useFactory: (config: ConfigService) => ({\n        type: 'postgres',\n        url: config.get<string>('DATABASE_URL'),\n        autoLoadEntities: true,\n        synchronize: false,\n      }),\n    }),\n  ],\n})\nexport class AppModule {}" },
+        { type: "callout", variant: "warn", text: "Don't read `process.env` (or `ConfigService`) at module **import** time or in field initializers — it may run before `.env` is loaded. Read config inside `useFactory`, a constructor, or `onModuleInit`, never at file top-level." },
+
+        { type: "heading", text: "ORM registration & the N+1 trap" },
+        { type: "p", text: "TypeORM needs each entity registered with `TypeOrmModule.forFeature([...])` in the module that injects its repository — forget it and you get another \"can't resolve dependencies\" for the repository token. Both ORMs also make it trivially easy to fire an N+1 query." },
+        { type: "code", lang: "ts", code: "// N+1: 1 query for users, then 1 MORE per user for their posts\nconst users = await this.repo.find();\nfor (const u of users) {\n  const posts = await u.posts;   // lazy relation -> a query each iteration\n}\n\n// Fix: eager-load in a single joined query\nawait this.repo.find({ relations: { posts: true } });          // TypeORM\nawait this.prisma.user.findMany({ include: { posts: true } }); // Prisma" },
+        { type: "callout", variant: "tip", text: "Register repositories per-feature: `TypeOrmModule.forFeature([User])` in `UsersModule`. The repository is only injectable in modules that ran `forFeature` for that entity." },
+
+        { type: "heading", text: "Which layer catches what? (execution order)" },
+        { type: "p", text: "Guards, interceptors, pipes and filters look similar but run at fixed points. Picking the wrong one is a common source of \"my code never runs\" bugs — e.g. a guard can't see the validated/transformed DTO because **pipes run after guards**." },
+        { type: "table", headers: ["Order", "Stage", "Job", "Sees validated body?"], rows: [
+          ["1", "Middleware", "Raw req/res, framework-level setup", "no"],
+          ["2", "Guards", "Allow/deny (auth, roles) — return bool or throw", "no"],
+          ["3", "Interceptors (pre)", "Wrap handler: start timers, logging, caching", "no"],
+          ["4", "Pipes", "Validate & transform handler arguments", "produces it"],
+          ["5", "Route handler", "Your controller method runs", "yes"],
+          ["6", "Interceptors (post)", "Map/wrap the response, timeouts", "n/a"],
+          ["7", "Exception filters", "Catch anything thrown above & shape the error", "n/a"]
+        ] },
+        { type: "callout", variant: "note", text: "Because pipes run **after** guards, do authorization on the raw request in a guard, not on a validated DTO. And because filters sit outermost, a thrown `ForbiddenException` from a guard is still caught and formatted by your global exception filter." }
+      ]
     }
   ],
 
@@ -217,7 +272,10 @@
     "`ValidationPipe` does nothing without `transform: true` for type coercion, and `whitelist: true` to strip unknown props.",
     "TypeORM `synchronize: true` in prod can silently drop columns — always use migrations.",
     "Circular deps require `forwardRef()` on both sides — usually a sign to restructure.",
-    "REQUEST-scoped providers make everything that depends on them request-scoped too (perf hit)."
+    "REQUEST-scoped providers make everything that depends on them request-scoped too (perf hit).",
+    "The `(?)` in a resolve error points at the exact unprovided constructor arg — check the OWNER `exports` it and the CONSUMER `imports` that module.",
+    "`@Exclude()` silently leaks fields unless `ClassSerializerInterceptor` runs AND you return a real class instance (not a plain object / raw ORM row).",
+    "Don't read `ConfigService`/`process.env` at module import or field-init time — use `forRootAsync` `useFactory` or `onModuleInit` so `.env` is loaded first."
   ],
 
   flashcards: [
@@ -229,7 +287,9 @@
     { q: "What two options make `ValidationPipe` strict + type-correct?", a: "`whitelist: true` (strip unknown props) and `transform: true` (coerce to DTO types)." },
     { q: "How do you make a provider available to another module?", a: "Add it to `exports` of its module, and `imports` that module where needed." },
     { q: "Why avoid TypeORM `synchronize: true` in production?", a: "It auto-alters the schema on boot and can drop columns/data — use migrations instead." },
-    { q: "How do you resolve a circular dependency between two providers?", a: "Wrap each reference in `forwardRef(() => Other)` — or refactor to remove the cycle." }
+    { q: "How do you resolve a circular dependency between two providers?", a: "Wrap each reference in `forwardRef(() => Other)` — or refactor to remove the cycle." },
+    { q: "Why can a Guard not read your validated DTO?", a: "Pipes (which validate/transform) run **after** guards. Do auth on the raw request in the guard; the transformed body only exists by the time the handler runs." },
+    { q: "Why does marking one provider `Scope.REQUEST` slow down a whole controller?", a: "Scope **bubbles up**: anything that injects a request-scoped provider becomes request-scoped too, so the entire chain (up to the controller) is re-instantiated on every request." }
   ],
 
   cheatsheet: [
@@ -240,6 +300,8 @@
     { label: "Protect route", code: "@UseGuards(AuthGuard('jwt'))" },
     { label: "Global pipe", code: "app.useGlobalPipes(new ValidationPipe())" },
     { label: "Inject repo", code: "@InjectRepository(User) repo: Repository<User>" },
-    { label: "Prisma migrate", code: "npx prisma migrate dev" }
+    { label: "Prisma migrate", code: "npx prisma migrate dev" },
+    { label: "Export a provider", code: "@Module({ providers: [X], exports: [X] })" },
+    { label: "Break a DI cycle", code: "@Inject(forwardRef(() => Other))" }
   ]
 });

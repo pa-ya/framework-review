@@ -5,7 +5,7 @@
   group: "Go",
   tagline: "A **lightweight, idiomatic** router that is 100% `net/http` compatible — no framework lock-in, just composable middleware and sub-routers.",
   color: "#4a5568",
-  readMinutes: 12,
+  readMinutes: 14,
 
   sections: [
     {
@@ -72,7 +72,7 @@
       body: [
         { type: "p", text: "With pure stdlib you encode/decode yourself. `go-chi/render` adds tidy helpers." },
         { type: "code", lang: "go", code: "// stdlib\nfunc createUser(w http.ResponseWriter, r *http.Request) {\n\tvar in CreateUser\n\tif err := json.NewDecoder(r.Body).Decode(&in); err != nil {\n\t\thttp.Error(w, \"bad json\", http.StatusBadRequest)\n\t\treturn\n\t}\n\tw.Header().Set(\"Content-Type\", \"application/json\")\n\tw.WriteHeader(http.StatusCreated)\n\tjson.NewEncoder(w).Encode(in)\n}" },
-        { type: "code", lang: "go", code: "// with go-chi/render\nimport \"github.com/go-chi/render\"\n\nrender.DecodeJSON(r.Body, &in)\nrender.Status(r, http.StatusCreated)\nrender.JSON(w, r, in)" }
+        { type: "code", lang: "go", code: "// with go-chi/render — same handler, less boilerplate\nimport \"github.com/go-chi/render\"\n\nfunc createUser(w http.ResponseWriter, r *http.Request) {\n\tvar in CreateUser\n\tif err := render.DecodeJSON(r.Body, &in); err != nil {   // decode\n\t\trender.Status(r, http.StatusBadRequest)\n\t\trender.JSON(w, r, map[string]string{\"error\": \"bad json\"})\n\t\treturn\n\t}\n\t// ... persist in ...\n\trender.Status(r, http.StatusCreated)        // sets the status\n\trender.JSON(w, r, in)                        // sets Content-Type + encodes\n}" }
       ]
     },
     {
@@ -98,7 +98,7 @@
       level: "deep",
       body: [
         { type: "p", text: "Use **golang-migrate** or **goose** for versioned SQL migrations." },
-        { type: "code", lang: "bash", code: "# golang-migrate\nmigrate create -ext sql -dir migrations create_users\nmigrate -database \"$DATABASE_URL\" -path migrations up" }
+        { type: "code", lang: "bash", code: "# golang-migrate CLI\n# 1. scaffold a pair of files: <ts>_create_users.up.sql / .down.sql\nmigrate create -ext sql -dir migrations create_users\n\n# 2. apply all pending migrations\nmigrate -database \"$DATABASE_URL\" -path migrations up\n\n# roll back the last one / jump to a version\nmigrate -database \"$DATABASE_URL\" -path migrations down 1\nmigrate -database \"$DATABASE_URL\" -path migrations goto 3" }
       ]
     },
     {
@@ -117,6 +117,33 @@
       body: [
         { type: "p", text: "Because a chi router is just an `http.Handler`, test it end-to-end with `httptest.NewServer` or by calling `ServeHTTP` directly." },
         { type: "code", lang: "go", code: "func TestRoute(t *testing.T) {\n\tr := chi.NewRouter()\n\tr.Get(\"/users/{id}\", getUser)\n\n\treq := httptest.NewRequest(\"GET\", \"/users/1\", nil)\n\trec := httptest.NewRecorder()\n\tr.ServeHTTP(rec, req)\n\n\tif rec.Code != http.StatusOK { t.Fatalf(\"got %d\", rec.Code) }\n}" }
+      ]
+    },
+    {
+      id: "headaches",
+      title: "Common headaches & how to handle them",
+      level: "deep",
+      body: [
+        { type: "p", text: "chi's own footguns are almost all about **middleware ordering** and **route composition** — it stays so close to `net/http` that the rest is just Go." },
+
+        { type: "heading", text: "1. Middleware must be registered before routes" },
+        { type: "p", text: "chi freezes a router's middleware stack the moment the first route is added to it. Call every `Use` for a router *before* any `Get`/`Post`/`Route` on that same router, or chi panics with `all middlewares must be defined before routes`." },
+        { type: "code", lang: "go", code: "// WRONG: middleware added after a route on the same router -> panic\nr := chi.NewRouter()\nr.Get(\"/\", home)\nr.Use(middleware.Logger)          // panics: middleware after route\n\n// RIGHT: stack first, then routes\nr := chi.NewRouter()\nr.Use(middleware.RequestID)       // tag each request\nr.Use(middleware.RealIP)          // trust X-Forwarded-For (behind a proxy only)\nr.Use(middleware.Logger)          // structured access log\nr.Use(middleware.Recoverer)       // turn panics into 500s, keep server up\nr.Get(\"/\", home)                  // routes come after the stack" },
+        { type: "callout", variant: "gotcha", text: "Order is execution order: `Recoverer` only protects middleware/handlers registered *after* it, so put it near the top. `RequestID` should precede `Logger` so the log line carries the id. Each sub-router built with `Route`/`Group` has its **own** stack layered on top of the parent's." },
+
+        { type: "heading", text: "2. Reading path params — chi.URLParam, and it's always a string" },
+        { type: "p", text: "Path values come from `chi.URLParam(r, name)` (not stdlib `r.PathValue`), and they're always strings — convert and validate yourself." },
+        { type: "code", lang: "go", code: "func getUser(w http.ResponseWriter, r *http.Request) {\n\tid, err := strconv.Atoi(chi.URLParam(r, \"id\"))   // {id} -> int\n\tif err != nil {\n\t\thttp.Error(w, \"id must be an integer\", http.StatusBadRequest)\n\t\treturn\n\t}\n\t_ = id\n}\n\n// wildcard params use the {name} form; catch-all is {name}* at the end:\n//   r.Get(\"/files/*\", h) -> chi.URLParam(r, \"*\")" },
+
+        { type: "heading", text: "3. Sub-routers, Mount, and route-pattern conflicts" },
+        { type: "p", text: "`Route` and `Mount` compose routers, but two patterns that can match the same request path panic at build time — chi rejects the ambiguity up front rather than picking a winner silently." },
+        { type: "code", lang: "go", code: "// A wildcard segment and a Mount at overlapping paths conflict:\nr.Get(\"/users/{id}\", getUser)\nr.Mount(\"/users\", subRouter)      // panics: conflicts with /users/{id}\n\n// Fix: keep a resource under ONE sub-router instead of mixing styles.\nr.Route(\"/users\", func(r chi.Router) {\n\tr.Get(\"/\", listUsers)\n\tr.Mount(\"/{id}/posts\", postsRouter)   // nested, no overlap\n\tr.Get(\"/{id}\", getUser)\n})" },
+        { type: "callout", variant: "warn", text: "Trailing slashes are distinct routes in chi: `/users` and `/users/` are not the same. Add `middleware.StripSlashes` or `middleware.RedirectSlashes` (before routes) if you want them unified." },
+
+        { type: "heading", text: "4. chi is stdlib-compatible — lean on that" },
+        { type: "p", text: "A `chi.Router` **is** an `http.Handler`, and chi middleware is the standard `func(http.Handler) http.Handler`. Any stdlib or third-party `net/http` middleware drops straight in, and you serve the router with a plain `http.Server`." },
+        { type: "code", lang: "go", code: "// mix stdlib middleware and chi middleware freely\nr.Use(someStdlibMiddleware)                 // func(http.Handler) http.Handler\nr.Use(middleware.Timeout(60 * time.Second)) // chi's own\n\n// serve with an explicit server (timeouts + graceful shutdown)\nsrv := &http.Server{Addr: \":8080\", Handler: r, ReadHeaderTimeout: 5 * time.Second}\nsrv.ListenAndServe()" },
+        { type: "callout", variant: "note", text: "The heavyweight Go headaches — goroutine leaks, data races, `context` cancellation, the typed-nil error, `defer`-in-loop — are not chi-specific. They live in the **Go Standard Library** deck's 'Common headaches' section; everything there applies unchanged to chi handlers." }
       ]
     }
   ],
@@ -138,7 +165,10 @@
     "chi doesn't parse/validate bodies for you — decode JSON and validate yourself (or add a validator lib).",
     "`chi.URLParam(r, \"id\")` returns a string; convert with `strconv.Atoi` and handle the error.",
     "Trailing-slash routes are distinct; add `middleware.StripSlashes`/`RedirectSlashes` if you want them merged.",
-    "A nested `Route`/`Mount` gets its own middleware chain — middleware on the parent still applies, order matters."
+    "A nested `Route`/`Mount` gets its own middleware chain — middleware on the parent still applies, order matters.",
+    "Put `middleware.Recoverer` near the top of the stack — it only catches panics in middleware/handlers registered **after** it.",
+    "Overlapping route patterns (e.g. `/users/{id}` and a `Mount(\"/users\", ...)`) **panic at build time** — chi refuses ambiguous routing rather than guessing.",
+    "The big concurrency headaches (goroutine leaks, data races, context, typed-nil errors) are **not** chi-specific — see the Go Standard Library deck."
   ],
 
   flashcards: [
@@ -148,7 +178,9 @@
     { q: "Correct way to make a context key?", a: "Define an **unexported custom type** (e.g. `type ctxKey string`) — never a bare string, to avoid package collisions." },
     { q: "What's the idiomatic DB stack for chi projects?", a: "Often no ORM: **sqlc** (typed codegen from SQL) + **pgx**; or sqlx. GORM if you want an ORM." },
     { q: "Why must `r.Use()` come before route registration?", a: "chi builds the middleware chain at registration time; adding middleware after routes on the same router panics." },
-    { q: "How do you test a chi router?", a: "It's an `http.Handler` — call `r.ServeHTTP(rec, req)` with `httptest`, no framework-specific setup needed." }
+    { q: "How do you test a chi router?", a: "It's an `http.Handler` — call `r.ServeHTTP(rec, req)` with `httptest`, no framework-specific setup needed." },
+    { q: "Why does chi panic if you call `r.Use` after a route?", a: "chi freezes a router's middleware stack when its first route is registered; every `Use` on that router must come before any `Get`/`Post`/`Route`. Sub-routers get their own stack." },
+    { q: "Where should `middleware.Recoverer` go and why?", a: "Near the **top** of the stack. Middleware runs in registration order, so Recoverer only wraps (and can recover panics from) handlers/middleware registered after it." }
   ],
 
   cheatsheet: [
@@ -159,6 +191,8 @@
     { label: "Sub-router", code: "r.Route(\"/users\", func(r chi.Router){…})" },
     { label: "Serve", code: "http.ListenAndServe(\":8080\", r)" },
     { label: "Ctx value", code: "context.WithValue(r.Context(), key, v)" },
-    { label: "JSON out", code: "render.JSON(w, r, v)" }
+    { label: "JSON out", code: "render.JSON(w, r, v)" },
+    { label: "Recover panics", code: "r.Use(middleware.Recoverer)" },
+    { label: "Group + mw", code: "r.Group(func(r chi.Router){ r.Use(mw); … })" }
   ]
 });

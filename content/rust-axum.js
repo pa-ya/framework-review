@@ -5,7 +5,7 @@
   group: "Rust",
   tagline: "Ergonomic async web framework from the **Tokio** team — routing built on **extractors**, middleware via **Tower**, no macros required.",
   color: "#dea584",
-  readMinutes: 18,
+  readMinutes: 22,
 
   sections: [
     {
@@ -84,6 +84,28 @@
         { type: "p", text: "Attach shared data (DB pool, config) with `.with_state(...)`, extract it with `State<T>`. Clone-cheap types (`Arc`, pools) are ideal." },
         { type: "code", lang: "rust", code: "#[derive(Clone)]\nstruct AppState { db: sqlx::PgPool }\n\nlet state = AppState { db: pool };\nlet app = Router::new()\n    .route(\"/users\", get(list_users))\n    .with_state(state);\n\nasync fn list_users(State(state): State<AppState>) -> Json<Vec<User>> {\n    let users = sqlx::query_as::<_, User>(\"SELECT * FROM users\")\n        .fetch_all(&state.db).await.unwrap();\n    Json(users)\n}" },
         { type: "callout", variant: "tip", text: "For shared **mutable** state, wrap it: `Arc<Mutex<T>>` (or `RwLock`). For pools/clients that are already `Clone + Send + Sync`, just store them directly." }
+      ]
+    },
+    {
+      id: "concurrency",
+      title: "Concurrency: tokio::spawn, blocking & channels",
+      level: "core",
+      body: [
+        { type: "p", text: "This is where Axum newcomers lose the most time — not to Axum, but to Tokio's rules colliding with Rust's ownership. A handler is already async, so you `await` I/O directly. The friction starts when you want work to **outlive the response** (`tokio::spawn`), run **blocking/CPU** code, or share mutable state across tasks. The compiler errors look scary but there are ~4 fixes you reuse forever." },
+        { type: "heading", text: "The core constraint" },
+        { type: "callout", variant: "note", text: "`tokio::spawn(future)` moves the future onto the runtime, so it must be **`Send + 'static`**: it can't borrow anything from the handler's stack (which is about to disappear) and can't hold a `!Send` value across an `.await`. \"`'static`\" is why you get *\"borrowed value does not live long enough\"* / *\"cannot move out of ... captured variable\"*. The fix is almost always: **clone owned data into the task**." },
+        { type: "heading", text: "Fire-and-forget background work from a handler" },
+        { type: "code", lang: "rust", code: "async fn create_order(State(st): State<AppState>, Json(body): Json<NewOrder>)\n    -> impl IntoResponse {\n    let order = save_order(&st.db, &body).await;\n\n    // respond NOW; do the slow stuff after. Clone what the task needs — don't borrow.\n    let db = st.db.clone();               // PgPool is Arc inside -> cheap clone\n    let email = body.email.clone();\n    tokio::spawn(async move {              // owns `db` + `email` => Send + 'static ✓\n        if let Err(e) = send_receipt(&db, &email).await {\n            tracing::error!(\"receipt failed: {e}\");   // a panic here won't crash the server\n        }\n    });\n\n    (StatusCode::CREATED, Json(order))\n}" },
+        { type: "callout", variant: "gotcha", text: "The #1 spawn mistake: `tokio::spawn(async move { do(&st).await })` capturing a **reference** to the handler's `State`/param. It won't compile (`'static` bound). Bind an owned clone *before* the `async move` — `let st = st.clone();` — then move that. Cloning a pool/`Arc` is cheap (it bumps a refcount); you are not copying the data." },
+        { type: "heading", text: "Blocking or CPU-heavy work → spawn_blocking" },
+        { type: "p", text: "`tokio::spawn` is for *async* work. A blocking call (heavy hashing, image resize, a sync library, big serde) inside an async task **stalls the whole worker thread** and starves other requests. Move it to the blocking pool and `await` the handle:" },
+        { type: "code", lang: "rust", code: "async fn hash_pw(Json(body): Json<Pw>) -> Result<String, StatusCode> {\n    // argon2/bcrypt is CPU-bound and blocking -> off the async worker\n    let hash = tokio::task::spawn_blocking(move || bcrypt::hash(&body.password, 12))\n        .await                                   // JoinError if the task panicked\n        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?\n        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;\n    Ok(hash)\n}" },
+        { type: "heading", text: "A long-lived worker: channel instead of spawn-per-request" },
+        { type: "p", text: "When many requests produce work for one consumer (batching writes, a rate-limited external API, serialized side effects), don't `spawn` per request. Start **one** worker task at boot and hand it a channel `Sender` via state — requests just `send`." },
+        { type: "code", lang: "rust", code: "use tokio::sync::mpsc;\n\n#[derive(Clone)]\nstruct AppState { jobs: mpsc::Sender<Job> }\n\n#[tokio::main]\nasync fn main() {\n    let (tx, mut rx) = mpsc::channel::<Job>(1024);\n\n    // ONE background consumer, owns its own resources\n    tokio::spawn(async move {\n        while let Some(job) = rx.recv().await {\n            process(job).await;                 // serialized, backpressured by the buffer\n        }\n    });\n\n    let app = Router::new()\n        .route(\"/enqueue\", axum::routing::post(enqueue))\n        .with_state(AppState { jobs: tx });\n    // ...serve\n}\n\nasync fn enqueue(State(st): State<AppState>, Json(job): Json<Job>) -> StatusCode {\n    match st.jobs.try_send(job) {\n        Ok(_) => StatusCode::ACCEPTED,\n        Err(_) => StatusCode::SERVICE_UNAVAILABLE,   // queue full = backpressure signal\n    }\n}" },
+        { type: "heading", text: "The Mutex-across-await trap" },
+        { type: "callout", variant: "warn", text: "Holding a `std::sync::MutexGuard` across an `.await` makes the future **`!Send`** → it won't spawn and often won't even compile in a handler. Two fixes: (1) drop the guard before awaiting — `let v = { *state.lock().unwrap() };` in its own scope — or (2) use `tokio::sync::Mutex`, whose guard *is* `Send`. Prefer (1) for short critical sections; a std Mutex is faster when you never await while holding it." },
+        { type: "callout", variant: "tip", text: "Spawned tasks are **detached** — if `main`/the server shuts down, they're dropped mid-flight, and a panic inside one is isolated (you must log it yourself). For work that must finish, keep the `JoinHandle` and `.await` it, or use a `TaskTracker` + `CancellationToken` (from `tokio-util`) for graceful shutdown." }
       ]
     },
     {
@@ -166,7 +188,8 @@
     { name: "jsonwebtoken", why: "JWT" },
     { name: "thiserror / anyhow", why: "error ergonomics" },
     { name: "tracing + tracing-subscriber", why: "structured logging" },
-    { name: "dotenvy", why: "load .env" }
+    { name: "dotenvy", why: "load .env" },
+    { name: "tokio-util", why: "CancellationToken + TaskTracker for graceful shutdown of spawned tasks" }
   ],
 
   gotchas: [
@@ -175,7 +198,11 @@
     "Tower layers apply outside-in: the **last** `.layer()` is outermost — order changes execution order.",
     "`sqlx::query!` macros need a live DB at compile time; run `cargo sqlx prepare` for offline/CI builds.",
     "Handlers must be `Send + 'static`; holding a non-`Send` value across an `.await` won't compile.",
-    "State type must be `Clone`; put expensive/shared things behind `Arc` and mutable state behind `Arc<Mutex<_>>`."
+    "State type must be `Clone`; put expensive/shared things behind `Arc` and mutable state behind `Arc<Mutex<_>>`.",
+    "`tokio::spawn` requires a `Send + 'static` future — **clone owned data in** (`let db = st.db.clone();`) before `async move`; you can't borrow the handler's state/params into a spawned task.",
+    "Holding a `std::sync::MutexGuard` across `.await` makes the future `!Send` (won't spawn) — drop the guard in a inner scope first, or use `tokio::sync::Mutex`.",
+    "Blocking/CPU code (bcrypt, image work, sync libs) inside an async task stalls the worker thread — move it to `tokio::task::spawn_blocking`.",
+    "Spawned tasks are detached: a panic inside is isolated (log it yourself) and shutdown drops them mid-flight — keep the `JoinHandle` or use `tokio-util` cancellation for work that must finish."
   ],
 
   flashcards: [
@@ -186,7 +213,11 @@
     { q: "How do you make `?` work in handlers?", a: "Define an error type implementing `IntoResponse` (+ `From` conversions), and return `Result<T, AppError>`." },
     { q: "What are Axum middleware built on?", a: "**Tower** layers — use `tower-http` layers or `middleware::from_fn`; the last `.layer()` is the outermost." },
     { q: "What makes SQLx special vs a typical ORM?", a: "It's SQL-first and can **check queries at compile time** against a real DB (`query!`/`query_as!` macros)." },
-    { q: "How do you unit-test an Axum router without a network?", a: "`app.oneshot(request)` via `tower::ServiceExt`." }
+    { q: "How do you unit-test an Axum router without a network?", a: "`app.oneshot(request)` via `tower::ServiceExt`." },
+    { q: "Why won't `tokio::spawn(async move { do(&state) })` compile in a handler?", a: "The spawned future must be `Send + 'static`, so it can't **borrow** the handler's stack. Clone owned data in first (`let s = state.clone();`) and move that — cloning a pool/`Arc` is just a refcount bump." },
+    { q: "Where should blocking or CPU-heavy work go?", a: "`tokio::task::spawn_blocking(move || ...)` and `.await` the handle. Running it directly in an async task stalls the worker thread and starves other requests." },
+    { q: "How do you avoid spawning a task per request for shared background work?", a: "Start **one** long-lived worker task at boot with an `mpsc` channel; put the `Sender` in state and have handlers `send`/`try_send`. Gives you serialization + backpressure." },
+    { q: "Why does holding a MutexGuard across `.await` break spawning?", a: "`std::sync::MutexGuard` is `!Send`, so the future becomes `!Send` and can't be spawned (often won't compile). Drop the guard before awaiting, or use `tokio::sync::Mutex`." }
   ],
 
   cheatsheet: [
@@ -197,6 +228,9 @@
     { label: "State", code: ".with_state(s) + State(s): State<T>" },
     { label: "Layer", code: ".layer(TraceLayer::new_for_http())" },
     { label: "Serve", code: "axum::serve(listener, app).await" },
-    { label: "SQLx query", code: "sqlx::query_as!(User, \"…\", id).fetch_one(&pool)" }
+    { label: "SQLx query", code: "sqlx::query_as!(User, \"…\", id).fetch_one(&pool)" },
+    { label: "Spawn (clone in!)", code: "let db=st.db.clone(); tokio::spawn(async move {..})" },
+    { label: "Blocking work", code: "spawn_blocking(move || heavy()).await?" },
+    { label: "Worker channel", code: "let (tx,mut rx)=mpsc::channel(1024)" }
   ]
 });

@@ -4,17 +4,17 @@ A static, offline web app for **reviewing** backend (and adjacent) frameworks �
 refresher for things you already learned but forget: init, core syntax, signature features,
 ORMs, auth, and gotchas. Most sections are a 10–20 minute read (Qt is longer by design).
 
-**Sections:**
+**Sections** (in sidebar order):
 
+- **C++** — Qt · Drogon
 - **Python** — FastAPI · Django · Flask
-- **NestJS** (TypeScript)
+- **TypeScript** — NestJS · ElysiaJS (Bun) · Next.js
 - **Go** — Standard Library (net/http) · chi · Echo
 - **Rust** — Axum · Anchor (Solana on-chain programs) · Leptos (fullstack reactive)
-- **ElysiaJS** (Bun) · **Next.js** · **Laravel**
-- **C++** — Qt · Drogon
+- **Laravel** (PHP)
 - **Practice & Projects** — cross-framework comparison + project ideas
 
-Related sections are grouped in the sidebar under a collapsible parent (**Python**, **Go**, **Rust**, **C++**).
+Related sections are grouped in the sidebar under a collapsible parent (**C++**, **Python**, **TypeScript**, **Go**, **Rust**). Every framework carries a **"Common headaches & how to handle them"** section covering its real-world pitfalls and the fix for each.
 
 ## Run it
 

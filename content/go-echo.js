@@ -5,7 +5,7 @@
   group: "Go",
   tagline: "High-performance, **batteries-included** Go web framework: a rich router, built-in middleware, binding & validation, and a handy `Context`.",
   color: "#00b5b8",
-  readMinutes: 13,
+  readMinutes: 15,
 
   sections: [
     {
@@ -111,7 +111,7 @@
       level: "core",
       body: [
         { type: "code", lang: "bash", code: "go get github.com/golang-jwt/jwt/v5 github.com/labstack/echo-jwt/v4" },
-        { type: "code", lang: "go", code: "import echojwt \"github.com/labstack/echo-jwt/v4\"\n\n// protect a group\nr := e.Group(\"/restricted\")\nr.Use(echojwt.WithConfig(echojwt.Config{\n\tSigningKey: []byte(os.Getenv(\"JWT_SECRET\")),\n}))\n\nr.GET(\"\", func(c echo.Context) error {\n\ttoken := c.Get(\"user\").(*jwt.Token)\n\tclaims := token.Claims.(jwt.MapClaims)\n\treturn c.JSON(200, echo.Map{\"sub\": claims[\"sub\"]})\n})" }
+        { type: "code", lang: "go", code: "import echojwt \"github.com/labstack/echo-jwt/v4\"\n\n// protect a group: the middleware parses+verifies the token and,\n// on success, stashes the *jwt.Token under c.Get(\"user\").\nr := e.Group(\"/restricted\")\nr.Use(echojwt.WithConfig(echojwt.Config{\n\tSigningKey: []byte(os.Getenv(\"JWT_SECRET\")),   // HS256 secret\n\t// ContextKey: \"user\" (default), TokenLookup: \"header:Authorization,Bearer \"\n}))\n\nr.GET(\"\", func(c echo.Context) error {\n\ttoken := c.Get(\"user\").(*jwt.Token)          // set by the middleware\n\tclaims := token.Claims.(jwt.MapClaims)       // your custom claims\n\treturn c.JSON(http.StatusOK, echo.Map{\"sub\": claims[\"sub\"]})\n})" }
       ]
     },
     {
@@ -131,6 +131,37 @@
         { type: "p", text: "A common layout (loosely the golang-standards style):" },
         { type: "code", lang: "text", code: "cmd/api/main.go          // entrypoint\ninternal/handler/        // echo handlers\ninternal/service/        // business logic\ninternal/repository/     // db access (gorm)\ninternal/model/          // structs\ninternal/middleware/\nconfig/" },
         { type: "callout", variant: "tip", text: "Keep business logic out of handlers. Handlers should bind+validate, call a service, and return. It makes testing and swapping frameworks trivial." }
+      ]
+    },
+    {
+      id: "headaches",
+      title: "Common headaches & how to handle them",
+      level: "deep",
+      body: [
+        { type: "p", text: "Echo's sharp edges cluster around its `Context` abstraction: binding + validation wiring, and the fact that `echo.Context` is a **per-request, single-use** object." },
+
+        { type: "heading", text: "1. c.Bind needs a registered Validator to validate" },
+        { type: "p", text: "`c.Bind` only maps the request into your struct — it does **not** validate. `c.Validate` calls whatever you assigned to `e.Validator`; if you never set one, it **panics** at runtime. Wire it once at startup." },
+        { type: "code", lang: "go", code: "import \"github.com/go-playground/validator/v10\"\n\n// 1. implement echo.Validator and register it ONCE\ntype CustomValidator struct{ v *validator.Validate }\nfunc (cv *CustomValidator) Validate(i any) error {\n\tif err := cv.v.Struct(i); err != nil {\n\t\t// surface a clean 400 instead of the raw validator error\n\t\treturn echo.NewHTTPError(http.StatusBadRequest, err.Error())\n\t}\n\treturn nil\n}\n\nfunc main() {\n\te := echo.New()\n\te.Validator = &CustomValidator{v: validator.New()}\n\t// ...\n}\n\n// 2. in the handler: bind THEN validate, both on a pointer\nfunc createUser(c echo.Context) error {\n\tvar in CreateUser\n\tif err := c.Bind(&in); err != nil {          // maps body/params\n\t\treturn echo.NewHTTPError(http.StatusBadRequest, \"invalid body\")\n\t}\n\tif err := c.Validate(&in); err != nil {      // runs the validator\n\t\treturn err                               // already an *echo.HTTPError\n\t}\n\treturn c.JSON(http.StatusCreated, in)\n}" },
+        { type: "callout", variant: "gotcha", text: "Bind a **pointer** (`&in`); binding a value silently does nothing. `c.Bind` reads path and query params too (via `param:`/`query:` tags), but by default only for GET/DELETE — for a JSON body it uses `json` tags." },
+
+        { type: "heading", text: "2. Params: c.Param vs c.QueryParam" },
+        { type: "p", text: "Path segments declared with `:name` come from `c.Param`; URL query values come from `c.QueryParam`. Both return strings — convert and default by hand." },
+        { type: "code", lang: "go", code: "// route: e.GET(\"/users/:id\", getUser)\nfunc getUser(c echo.Context) error {\n\tid, err := strconv.Atoi(c.Param(\"id\"))       // /users/:id path segment\n\tif err != nil {\n\t\treturn echo.NewHTTPError(http.StatusBadRequest, \"id must be an int\")\n\t}\n\n\tpage := c.QueryParam(\"page\")                  // ?page=... (\"\" if absent)\n\tif page == \"\" { page = \"1\" }\n\n\treturn c.JSON(http.StatusOK, echo.Map{\"id\": id, \"page\": page})\n}" },
+
+        { type: "heading", text: "3. Middleware order & group scope" },
+        { type: "p", text: "Echo runs middleware in registration order, so `Recover()` must come early to wrap everything after it. Middleware added to a `Group` applies only to that group's routes." },
+        { type: "code", lang: "go", code: "e := echo.New()\ne.Use(middleware.Recover())        // FIRST: catches panics in all that follows\ne.Use(middleware.RequestID())\ne.Use(middleware.Logger())         // sees the request id set above\n\n// group-scoped middleware: auth applies only under /admin\nadmin := e.Group(\"/admin\", authMiddleware)\nadmin.GET(\"/stats\", stats)         // protected\ne.GET(\"/health\", health)           // NOT protected — outside the group" },
+        { type: "callout", variant: "warn", text: "A global `e.Use(...)` added *after* you've defined routes still applies to them (Echo resolves middleware at request time), but relying on that is confusing — register global middleware before routes, and use groups for scoped middleware." },
+
+        { type: "heading", text: "4. Return errors — don't write them ad hoc" },
+        { type: "p", text: "Handlers return `error`; return `echo.NewHTTPError(status, msg)` and let the **central** `HTTPErrorHandler` shape the response. Don't mix `c.JSON(500, ...)` error responses with returned errors — pick one path (the returned-error path) so error formatting stays in one place." },
+        { type: "code", lang: "go", code: "func (h *Handler) getUser(c echo.Context) error {\n\tu, err := h.svc.Find(c.Request().Context(), id)\n\tif errors.Is(err, ErrNotFound) {\n\t\treturn echo.NewHTTPError(http.StatusNotFound, \"user not found\")\n\t}\n\tif err != nil {\n\t\treturn err                    // 500 via the central handler; log there\n\t}\n\treturn c.JSON(http.StatusOK, u)\n}\n\n// one place decides how every error becomes JSON\ne.HTTPErrorHandler = func(err error, c echo.Context) {\n\tcode, msg := http.StatusInternalServerError, \"internal error\"\n\tif he, ok := err.(*echo.HTTPError); ok {\n\t\tcode, msg = he.Code, fmt.Sprint(he.Message)\n\t}\n\tif !c.Response().Committed {      // don't double-write a started response\n\t\tc.JSON(code, echo.Map{\"error\": msg})\n\t}\n}" },
+
+        { type: "heading", text: "5. echo.Context is per-request — never use it in a goroutine" },
+        { type: "p", text: "The `echo.Context` (`c`) is recycled after the handler returns; touching it from a goroutine that outlives the request is a use-after-free style bug (garbled data, panics). If you fan out, **copy the values you need** first, and detach from the request context so the goroutine isn't cancelled when the response is sent." },
+        { type: "code", lang: "go", code: "func enqueue(c echo.Context) error {\n\t// copy primitives OUT of c before the goroutine starts\n\tuserID := c.Get(\"userID\").(int)\n\tpayload := c.QueryParam(\"job\")\n\n\t// detach: request ctx is cancelled once the response is written\n\tctx := context.WithoutCancel(c.Request().Context()) // Go 1.21+\n\n\tgo func() {\n\t\t// DO NOT touch c here. Use only the copied values + detached ctx.\n\t\tprocess(ctx, userID, payload)\n\t}()\n\n\treturn c.NoContent(http.StatusAccepted)\n}" },
+        { type: "callout", variant: "note", text: "The general Go concurrency headaches — goroutine leaks, data races, `context` propagation, the typed-nil error — are covered in depth in the **Go Standard Library** deck's 'Common headaches' section. Echo handlers are ordinary Go, so all of it applies." }
       ]
     }
   ],
@@ -152,7 +183,10 @@
     "GORM struct updates skip zero-values (0/\"\"/false) — use a map or `Select` to update those fields.",
     "Middleware order matters: put `Recover()` early so it catches panics in later middleware/handlers.",
     "Don't forget `Recover()` — an unrecovered panic in a handler crashes the request (and can take the server down).",
-    "`GORM AutoMigrate` is convenient but never drops/renames columns — use real migrations (golang-migrate) in prod."
+    "`GORM AutoMigrate` is convenient but never drops/renames columns — use real migrations (golang-migrate) in prod.",
+    "`echo.Context` is recycled after the handler returns — never touch `c` from a goroutine; copy the values you need and detach the context first.",
+    "Return `echo.NewHTTPError(...)` and let `HTTPErrorHandler` render it — don't hand-write error JSON with `c.JSON` in one handler and returned errors in another.",
+    "General Go concurrency headaches (goroutine leaks, races, context, typed-nil errors) live in the Go Standard Library deck — Echo handlers are plain Go."
   ],
 
   flashcards: [
@@ -162,7 +196,9 @@
     { q: "How do you apply middleware to only a set of routes?", a: "Create a `Group` with a prefix and pass middleware to it (`e.Group(\"/admin\", mw)` or `g.Use(mw)`)." },
     { q: "GORM gotcha when updating with a struct?", a: "Zero-value fields (0, \"\", false) are **skipped**; use a `map[string]any` or `Select` to write them." },
     { q: "Which middleware catches panics, and where should it go?", a: "`middleware.Recover()` — register it **early** so it wraps everything after it." },
-    { q: "How do you pass data from middleware to a handler?", a: "`c.Set(\"key\", val)` in middleware, `c.Get(\"key\")` in the handler." }
+    { q: "How do you pass data from middleware to a handler?", a: "`c.Set(\"key\", val)` in middleware, `c.Get(\"key\")` in the handler." },
+    { q: "Can you use `echo.Context` inside a goroutine spawned by a handler?", a: "No — `c` is recycled once the handler returns. Copy the primitive values you need out of `c` first, and use a detached context (`context.WithoutCancel(c.Request().Context())`) so the goroutine isn't cancelled when the response is sent." },
+    { q: "Where should `middleware.Recover()` sit in the chain?", a: "Register it **first** (before other middleware and routes). Echo runs middleware in registration order, so Recover only catches panics from whatever is registered after it." }
   ],
 
   cheatsheet: [
@@ -173,6 +209,8 @@
     { label: "Bind body", code: "c.Bind(&in)" },
     { label: "Group + mw", code: "g := e.Group(\"/api\", mw)" },
     { label: "Error", code: "echo.NewHTTPError(404, \"...\")" },
-    { label: "GORM eager", code: "db.Preload(\"Posts\").Find(&xs)" }
+    { label: "GORM eager", code: "db.Preload(\"Posts\").Find(&xs)" },
+    { label: "Register validator", code: "e.Validator = &CustomValidator{...}" },
+    { label: "Query param", code: "c.QueryParam(\"page\")" }
   ]
 });

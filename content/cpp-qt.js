@@ -5,7 +5,7 @@
   tagline: "The cross-platform C++ framework — **signals & slots**, a rich object model, Widgets **and** QML for building native GUIs, plus batteries-included core, network and concurrency modules.",
   color: "#41CD52",
   group: "C++",
-  readMinutes: 40,
+  readMinutes: 42,
 
   sections: [
     {
@@ -441,6 +441,40 @@
         { type: "callout", variant: "gotcha", text: "The most common runtime failure: **\"could not find the Qt platform plugin\"**. It means the `platforms/` plugin dir wasn't deployed next to the binary — that's exactly what `windeployqt`/`macdeployqt` fix. Static builds avoid this but usually require a commercial license or building Qt yourself." },
         { type: "link", url: "https://doc.qt.io/qt-6/deployment.html", text: "Qt docs — Deploying Qt Applications" }
       ]
+    },
+    {
+      id: "headaches",
+      title: "Common headaches & how to handle them",
+      level: "deep",
+      body: [
+        { type: "p", text: "Almost every hard-to-debug Qt bug traces back to one of five things: who owns an object, why a `connect()` silently did nothing, which *thread* an object lives in, a frozen UI, or the moc/build pipeline. Here is each trap and the exact fix." },
+
+        { type: "heading", text: "1. Double-free from mixing ownership models" },
+        { type: "p", text: "A parented `QObject` is deleted by its parent. If you *also* `delete` it, `unique_ptr`-wrap it, or stack-allocate it under a heap parent, you get a **double free** — a crash on shutdown that's maddening to trace because the object looks fine until the parent tears down." },
+        { type: "code", lang: "cpp", code: "// WRONG — two owners: the parent AND the unique_ptr both try to delete\nstd::unique_ptr<QPushButton> btn(new QPushButton(\"OK\", parentWidget));\n\n// WRONG — stack object given a heap parent; parent will delete a stack address\nQPushButton local(\"OK\");\nlayout->addWidget(&local);          // parent now thinks it owns &local -> crash\n\n// RIGHT — parented QObjects are raw new, no manual delete, no smart pointer\nauto *btn = new QPushButton(\"OK\", parentWidget);   // parent deletes it\n\n// RIGHT — a top-level object with NO parent: pick exactly one owner\nauto win = std::make_unique<QWidget>();            // unique_ptr owns it (no parent)" },
+        { type: "callout", variant: "gotcha", text: "**Fix:** decide ownership *once*. If a `QObject` has a parent, use raw `new` and never `delete`/wrap it. If it has no parent, give it a single owner (a smart pointer, or `deleteLater()` for objects tied to the event loop). Use `QPointer<T>` for a *non-owning* \"might already be dead\" reference — it auto-nulls when the object is destroyed. Never delete a widget you passed to a layout — the layout reparents it, so the window owns it." },
+
+        { type: "heading", text: "2. connect() that silently does nothing" },
+        { type: "p", text: "The legacy string-based `SIGNAL()/SLOT()` macros are resolved by name **at runtime**. A typo, a wrong argument list, or a missing `Q_OBJECT` makes the connection fail — but the program keeps running; the only clue is a `QObject::connect: No such slot...` line buried in the console. Nothing calls your slot and you have no compile error." },
+        { type: "code", lang: "cpp", code: "// SILENT FAILURE — string typo ('clickd'), only a runtime console warning\nconnect(button, SIGNAL(clickd()), this, SLOT(onClick()));\n\n// COMPILE ERROR instead (good!) — the pointer-to-member overload is type-checked\nconnect(button, &QPushButton::clicked, this, &MyWindow::onClick);\n\n// Verify at runtime if you ever must: connect() returns a truthy Connection\nauto c = connect(src, &Src::sig, dst, &Dst::slot);\nQ_ASSERT(c);      // false -> the connection did not take" },
+        { type: "callout", variant: "gotcha", text: "**Fix:** always use the **function-pointer** `connect()` — `connect(src, &Src::sig, dst, &Dst::slot)` — so typos and signature mismatches are compile errors. If a signal/slot still doesn't fire, check the class has `Q_OBJECT` in a header moc processes (and that you re-ran the build after adding it). For overloaded signals, use `qOverload<int>(&Klass::sig)` to disambiguate. `connect()` returns a `QMetaObject::Connection` that is falsy on failure — assert it while debugging." },
+
+        { type: "heading", text: "3. Thread affinity: touching a QObject from the wrong thread" },
+        { type: "p", text: "Every `QObject` \"lives in\" the thread that created it (its **thread affinity**). Calling a widget's methods — or any `QObject` — from a worker thread is undefined behaviour: it may work, corrupt state, or crash randomly. `moveToThread` changes affinity, but only *before* you start using the object cross-thread, and it refuses objects that have a parent." },
+        { type: "code", lang: "cpp", code: "// WRONG — worker thread pokes the GUI directly = UB / random crashes\nstd::thread([label]{ label->setText(\"done\"); }).detach();\n\n// RIGHT — worker object moved to a thread; results come back via a QUEUED signal\nauto *thread = new QThread;\nauto *worker = new Worker;            // NO parent (moveToThread refuses parented objects)\nworker->moveToThread(thread);\nconnect(worker, &Worker::result, this, &MyWindow::showResult); // auto-queued to GUI thread\nconnect(thread, &QThread::started, worker, &Worker::run);\nthread->start();\n\n// Or marshal a one-off call onto the GUI thread from anywhere:\nQMetaObject::invokeMethod(label, [label]{ label->setText(\"done\"); }, Qt::QueuedConnection);" },
+        { type: "callout", variant: "gotcha", text: "**Fix:** never call GUI/widget methods off the main thread. Communicate cross-thread with **queued signal/slot connections** (the default `Qt::AutoConnection` becomes queued automatically when sender and receiver live in different threads) or `QMetaObject::invokeMethod(obj, fn, Qt::QueuedConnection)`. Use the **worker-object + `moveToThread`** pattern, not a `QThread` subclass, and don't give the worker a parent. Custom types passed through a queued connection must be registered with `qRegisterMetaType<T>()`." },
+
+        { type: "heading", text: "4. A frozen UI: blocking the event loop" },
+        { type: "p", text: "The GUI is driven by a single event loop on the main thread. Any long-running work *inside a slot* — a big computation, a synchronous network/file call, `sleep`, or a busy `while` — blocks that loop, so paint, input and timer events stop: the window greys out and the OS shows \"Not Responding.\" Pumping events by hand (`processEvents()` in a loop) is a tempting hack that invites re-entrancy bugs." },
+        { type: "code", lang: "cpp", code: "// WRONG — the slot blocks the GUI thread for seconds; UI freezes\nvoid MainWindow::onCompute() {\n    auto result = crunchNumbers();     // 5s of CPU on the GUI thread\n    resultLabel->setText(result);\n}\n\n// RIGHT — offload to a pool thread, get the result back on the GUI thread\nvoid MainWindow::onCompute() {\n    auto *watcher = new QFutureWatcher<QString>(this);\n    connect(watcher, &QFutureWatcher<QString>::finished, this, [this, watcher]{\n        resultLabel->setText(watcher->result());   // back on the GUI thread\n        watcher->deleteLater();\n    });\n    watcher->setFuture(QtConcurrent::run([]{ return crunchNumbers(); }));\n}" },
+        { type: "callout", variant: "gotcha", text: "**Fix:** keep slots short. Offload heavy work with `QtConcurrent::run` + `QFutureWatcher`, a `QThreadPool`/`QRunnable`, or a worker object on a `QThread`, and deliver results back with a signal. For I/O, prefer Qt's **async** APIs (`QNetworkAccessManager`, `QProcess`, sockets) that already return via signals — don't busy-wait on them. Avoid `QCoreApplication::processEvents()` as a way to \"unfreeze\" — it re-enters the event loop and causes subtle recursion/lifetime bugs." },
+
+        { type: "heading", text: "5. The moc/build pipeline: vtable & missing-symbol errors" },
+        { type: "p", text: "`Q_OBJECT` is a promise that **moc** will generate the class's meta-object (signals, slots, properties). If moc doesn't run on that class, you get link errors like `undefined reference to vtable for Foo` or `undefined reference to Foo::mySignal(int)` — the declarations exist but their generated bodies don't." },
+        { type: "code", lang: "cpp", code: "// Foo.h — Q_OBJECT MUST live in a header that moc scans\nclass Foo : public QObject {\n    Q_OBJECT                       // moc reads THIS header and emits moc_Foo.cpp\npublic:\n    explicit Foo(QObject *parent = nullptr);\nsignals:\n    void changed(int);             // body generated by moc — never write it yourself\n};" },
+        { type: "code", lang: "cmake", code: "# CMake: turn moc on so Q_OBJECT classes are processed automatically\nset(CMAKE_AUTOMOC ON)              # or qt_standard_project_setup()\nqt_add_executable(app main.cpp foo.h foo.cpp)  # list the HEADER too" },
+        { type: "callout", variant: "gotcha", text: "**Fix:** put every `Q_OBJECT` class in a **header** (not a `.cpp`), enable **`CMAKE_AUTOMOC`** (or `qt_standard_project_setup()`), and make sure the header is reachable from a target. After adding `Q_OBJECT` to an existing class, **re-run CMake configure** so AUTOMOC picks it up — a stale build is the usual cause of a sudden vtable error. If `Q_OBJECT` is genuinely inside a `.cpp` file, add `#include \"file.moc\"` at the end so moc's output is compiled in." }
+      ]
     }
   ],
 
@@ -471,7 +505,10 @@
     "Mixing `QString` with `const char*`/`std::string` implicitly can mangle non-ASCII text — convert explicitly with `toUtf8()`/`fromUtf8()`.",
     "Deployment: ship the **platform plugin** (`platforms/`) via `windeployqt`/`macdeployqt` or you get 'could not find the Qt platform plugin'.",
     "For lambda connections that touch other objects, pass a **context QObject** so the connection dies with it.",
-    "Static linking of open-source Qt triggers LGPL/GPL relinking obligations — check licensing before you ship."
+    "Static linking of open-source Qt triggers LGPL/GPL relinking obligations — check licensing before you ship.",
+    "**Silent connect() failures:** the string-based `SIGNAL()/SLOT()` macros only warn at runtime on a typo/signature mismatch — use the compile-checked `connect(src, &Src::sig, dst, &Dst::slot)` form. `connect()` returns a falsy `Connection` when it fails.",
+    "**Ownership double-free:** never give the same `QObject` both a parent and a smart pointer, and never `delete` (or stack-allocate) a widget you handed to a layout — the layout reparents it. Use `QPointer<T>` for a non-owning \"maybe-dead\" reference.",
+    "After adding `Q_OBJECT` to a class, **re-run CMake configure** — a stale AUTOMOC build causes a sudden `undefined reference to vtable` error even though the code is correct."
   ],
 
   flashcards: [
@@ -492,7 +529,9 @@
     { q: "When do you use Graphics View instead of hand-painting?", a: "For many interactive 2D objects (diagram/CAD/games): a `QGraphicsScene` holds `QGraphicsItem`s shown by a `QGraphicsView`, handling selection, z-order, hit-testing, zoom/pan for you." },
     { q: "In QML, what are the three ways to position items?", a: "**Anchors** (glue edges: `anchors.fill/centerIn`), **positioners** (`Row`/`Column`/`Grid` auto-arrange), and **Qt Quick Layouts** (`RowLayout`/`ColumnLayout` that *resize* children via `Layout.fillWidth` etc.)." },
     { q: "How does a QML ListView render data?", a: "It binds a `model` (number, JS array, `ListModel`, or a C++ `QAbstractListModel`) and stamps one `delegate` per item; model **roles** are available by name inside the delegate (plus `index`/`modelData`). It virtualizes long lists." },
-    { q: "How does QML animate between UI configurations?", a: "Declare named **`State`s** (each a set of `PropertyChanges`) and **`Transition`s** that animate the moves. Or use `Behavior on prop { NumberAnimation{} }` to auto-animate every change to a property." }
+    { q: "How does QML animate between UI configurations?", a: "Declare named **`State`s** (each a set of `PropertyChanges`) and **`Transition`s** that animate the moves. Or use `Behavior on prop { NumberAnimation{} }` to auto-animate every change to a property." },
+    { q: "Why does a slot never fire even though the code compiles and runs?", a: "Almost always a **thread-affinity** or **connection** issue: a string-based `SIGNAL()/SLOT()` typo (fails silently at runtime), a missing `Q_OBJECT`/stale moc build, or the receiver lives in another thread with no event loop running. Use the function-pointer `connect()` (compile-checked) and check `connect()`'s return value." },
+    { q: "You call `label->setText()` from a std::thread and the app crashes randomly — why, and what's the fix?", a: "GUI objects have **thread affinity** to the main thread; touching them from another thread is undefined behaviour. Marshal the call back with a **queued** signal/slot or `QMetaObject::invokeMethod(label, fn, Qt::QueuedConnection)`; do heavy work on a worker moved via `moveToThread`." }
   ],
 
   cheatsheet: [
@@ -513,6 +552,8 @@
     { label: "Background run", code: "QtConcurrent::run([]{ return work(); });" },
     { label: "Async HTTP GET", code: "auto *r = nam->get(QNetworkRequest(url));" },
     { label: "Safe delete", code: "obj->deleteLater();" },
-    { label: "Deploy (Windows)", code: "windeployqt --qmldir src app.exe" }
+    { label: "Deploy (Windows)", code: "windeployqt --qmldir src app.exe" },
+    { label: "Invoke on GUI thread", code: "QMetaObject::invokeMethod(w, fn, Qt::QueuedConnection);" },
+    { label: "Guarded pointer", code: "QPointer<QWidget> p = dlg; if (p) p->raise();" }
   ]
 });

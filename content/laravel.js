@@ -4,7 +4,7 @@
   language: "PHP",
   tagline: "The **full-stack PHP** framework: expressive routing, the **Eloquent** ORM, **Artisan** CLI, migrations, queues, and elegant developer ergonomics.",
   color: "#ff2d20",
-  readMinutes: 18,
+  readMinutes: 20,
 
   sections: [
     {
@@ -131,7 +131,7 @@
       body: [
         { type: "p", text: "Offload slow work (emails, image processing) to **queued jobs**. Configure a driver (database, Redis) and run a worker." },
         { type: "code", lang: "bash", code: "php artisan make:job SendWelcomeEmail\nphp artisan queue:work            # run the worker (keep it running!)" },
-        { type: "code", lang: "php", code: "SendWelcomeEmail::dispatch($user);              // push to queue\nSendWelcomeEmail::dispatch($user)->delay(now()->addMinutes(5));" },
+        { type: "code", lang: "php", code: "// app/Jobs/SendWelcomeEmail.php\nclass SendWelcomeEmail implements ShouldQueue\n{\n    use Queueable, SerializesModels;   // model stored by id, re-fetched when the job runs\n\n    public function __construct(public User $user) {}\n\n    public function handle(): void {\n        Mail::to($this->user)->send(new WelcomeMail($this->user));\n    }\n}\n\n// dispatch from a controller/service:\nSendWelcomeEmail::dispatch($user);                       // push onto the queue\nSendWelcomeEmail::dispatch($user)->delay(now()->addMinutes(5));\nSendWelcomeEmail::dispatch($user)->onQueue('emails');    // route to a named queue" },
         { type: "callout", variant: "gotcha", text: "Dispatched jobs do nothing until a **worker** is running (`queue:work`). Forgetting the worker (or to restart it after deploy) is a classic \"why didn't my email send?\" bug. Use **Horizon** for Redis queues + monitoring." }
       ]
     },
@@ -156,6 +156,49 @@
         { type: "p", text: "Laravel favors **Pest** (or PHPUnit) with expressive HTTP + DB assertions." },
         { type: "code", lang: "php", code: "// Pest\nit('creates a post', function () {\n    $user = User::factory()->create();\n    $res = $this->actingAs($user)->postJson('/api/posts', [\n        'title' => 'Hi', 'body' => 'World',\n    ]);\n    $res->assertStatus(201);\n    $this->assertDatabaseHas('posts', ['title' => 'Hi']);\n});" }
       ]
+    },
+    {
+      id: "headaches",
+      title: "Common headaches & how to handle them",
+      level: "deep",
+      body: [
+        { type: "p", text: "The failure modes that bite almost every Laravel app in production. Each has a boring, reliable fix." },
+
+        { type: "heading", text: "N+1 queries hidden in Blade loops" },
+        { type: "p", text: "A relationship accessed inside a loop (or a `@foreach` in Blade) fires one query per row. Ten posts each printing `$post->author->name` becomes 1 + 10 = 11 queries." },
+        { type: "code", lang: "php", code: "// BAD: 1 + N queries — author loaded lazily on each iteration\n$posts = Post::latest()->get();\n// Blade view: @foreach ($posts as $post) {{ $post->author->name }} @endforeach\n\n// GOOD: eager load everything the view will touch (2 queries total)\n$posts = Post::with(['author', 'comments'])->latest()->get();\n\n// nested + loading onto an already-fetched model:\nPost::with('comments.author')->get();   // dot = nested relation\n$post->load('comments');                // load onto an existing instance\n$post->loadMissing('author');           // only if not already loaded" },
+        { type: "callout", variant: "tip", text: "Fix: call `Model::preventLazyLoading(! app()->isProduction())` in `AppServiceProvider::boot()` — any lazy load then throws in dev/tests, surfacing every hidden N+1. Verify query counts with **Laravel Debugbar** or **Telescope**." },
+
+        { type: "heading", text: "Mass assignment silently drops fields" },
+        { type: "p", text: "`Model::create($request->all())` only sets columns listed in `$fillable`. A field you forgot to whitelist is dropped with no error; with neither `$fillable` nor `$guarded` defined you get a `MassAssignmentException`." },
+        { type: "callout", variant: "gotcha", text: "Fix: keep an explicit `$fillable` whitelist and pass validated data, not raw input — `Post::create($request->validated())`. Avoid `$guarded = []` (allow-all) unless the input is fully trusted; it's how attackers slip in columns like `is_admin`." },
+
+        { type: "heading", text: "env() returns null after config:cache" },
+        { type: "p", text: "In production you run `php artisan config:cache` for speed. Once config is cached, `env()` returns **null everywhere except inside `config/*.php` files**. Code calling `env('STRIPE_KEY')` directly then works locally but breaks in prod." },
+        { type: "code", lang: "php", code: "// config/services.php — env() is fine INSIDE config files\nreturn ['stripe' => ['key' => env('STRIPE_KEY')]];\n\n// anywhere else in the app, ALWAYS read through config():\n$key = config('services.stripe.key');   // survives config:cache\n// $key = env('STRIPE_KEY');            // returns null in prod!" },
+        { type: "callout", variant: "warn", text: "Fix: never call `env()` outside `config/`. Read `config('...')` in app code. Note `route:cache` breaks any route defined with a closure — keep routes in controllers so caching works. Re-run cache commands (or `config:clear`) on each deploy." },
+
+        { type: "heading", text: "Queues: no worker, sync driver, stale models" },
+        { type: "p", text: "Three separate traps: (1) the default `QUEUE_CONNECTION=sync` runs jobs inline, so nothing is truly queued; (2) with a real driver, dispatched jobs do nothing until a long-running `queue:work` process is up — and it must restart on every deploy; (3) jobs use `SerializesModels`, storing only the model **id** and re-fetching on run — if the row was deleted meanwhile the job fails with `ModelNotFoundException`." },
+        { type: "code", lang: "bash", code: "# .env — use a real driver, not sync\nQUEUE_CONNECTION=database          # or redis\nphp artisan make:queue-table && php artisan migrate   # for the database driver\n\nphp artisan queue:work --tries=3   # long-running worker (Supervisor/Horizon in prod)\nphp artisan queue:restart          # ask workers to exit after the current job (run on deploy)\nphp artisan queue:failed           # inspect the failed_jobs table\nphp artisan queue:retry all        # requeue failed jobs" },
+        { type: "callout", variant: "gotcha", text: "Fix: run workers under Supervisor (or **Horizon** for Redis) so they auto-restart, add `queue:restart` to your deploy script, and monitor the `failed_jobs` table. Dispatch model **ids**, never unsaved models, into jobs." },
+
+        { type: "heading", text: "Migrations: ordering, down(), and data loss" },
+        { type: "list", items: [
+          "**FK ordering:** a table with `foreignId()->constrained()` must migrate *after* the table it references — migrations run in filename-timestamp order, so name them accordingly.",
+          "**down() correctness:** write a real inverse (`Schema::dropIfExists(...)` / drop the added column) so `migrate:rollback` actually reverses the change.",
+          "**Data loss:** `migrate:fresh` and `migrate:refresh` drop **every** table — never against production. Change prod data with forward-only migrations."
+        ] },
+        { type: "callout", variant: "warn", text: "Fix: use `migrate:fresh --seed` locally/CI; in prod run only forward-only `php artisan migrate`. Laravel prompts for confirmation when the environment is `production` unless you pass `--force`, so keep that guard on." },
+
+        { type: "heading", text: "Dates, timezones & JSON: lean on $casts" },
+        { type: "p", text: "Eloquent returns raw strings for JSON columns and inconsistent types for dates unless you cast them. Store timestamps in UTC (`APP_TIMEZONE=UTC`) and convert with Carbon only when displaying." },
+        { type: "code", lang: "php", code: "class Post extends Model\n{\n    protected $casts = [\n        'published_at' => 'datetime',   // -> Carbon instance\n        'meta'         => 'array',      // JSON column <-> PHP array\n        'published'    => 'boolean',\n    ];\n}\n\n// dates are now Carbon and JSON is a real array:\n$post->published_at->diffForHumans();               // \"3 hours ago\"\n$post->published_at->timezone('America/New_York');  // convert for display only\n$post->meta['tags'][] = 'php';                       // array access, re-encoded on save" },
+        { type: "callout", variant: "tip", text: "Fix: cast every date column to `datetime` and every JSON column to `array`. Keep storage in UTC and convert at display time — mixing app timezones into the database is a debugging nightmare." },
+
+        { type: "heading", text: "Validation: centralize with Form Requests" },
+        { type: "callout", variant: "note", text: "Fix: past a couple of rules, move validation into a `FormRequest` (`php artisan make:request`) — it holds `rules()` + `authorize()`, runs automatically before the controller, and hands you clean `$request->validated()` data (never `$request->all()`) to pass into `create()`. This also closes the mass-assignment hole above." }
+      ]
     }
   ],
 
@@ -178,7 +221,10 @@
     "`routes/api.php` needs `php artisan install:api` in Laravel 11+ before it exists.",
     "`.env` is not read in cached config — after `config:cache` you must `config:clear` when changing env locally.",
     "Route model binding 404s automatically if the model isn't found — don't also null-check manually.",
-    "Web routes are stateful (CSRF, sessions); API routes are stateless — use the right file."
+    "Web routes are stateful (CSRF, sessions); API routes are stateless — use the right file.",
+    "`env()` returns **null** outside `config/*.php` once `config:cache` runs in prod — read every value via `config('...')` in app code, never `env()`.",
+    "`migrate:fresh`/`migrate:refresh` drop **every** table — never run them against production; use forward-only `php artisan migrate`.",
+    "Queued jobs re-fetch Eloquent models by id via `SerializesModels` — a row deleted before the job runs throws `ModelNotFoundException`."
   ],
 
   flashcards: [
@@ -189,7 +235,9 @@
     { q: "What's the fastest way to scaffold a feature via Artisan?", a: "`php artisan make:model Post -mcr` — model + migration + resource controller in one command." },
     { q: "Sanctum vs Passport?", a: "**Sanctum** = lightweight SPA/API token auth (most common); **Passport** = full OAuth2 server." },
     { q: "Why isn't my queued job running?", a: "No worker is running — dispatched jobs only execute when `php artisan queue:work` is active (and restarted after deploys)." },
-    { q: "Where do web vs API routes live and how do they differ?", a: "`routes/web.php` (stateful: sessions + CSRF) vs `routes/api.php` (stateless, `/api` prefix, token auth)." }
+    { q: "Where do web vs API routes live and how do they differ?", a: "`routes/web.php` (stateful: sessions + CSRF) vs `routes/api.php` (stateless, `/api` prefix, token auth)." },
+    { q: "Why does `env()` return null in production but work locally?", a: "Once `php artisan config:cache` runs, `env()` reads only work **inside `config/*.php`**. Everywhere else read `config('...')`; the cached config no longer parses `.env`." },
+    { q: "What does `SerializesModels` do to a queued job's model?", a: "It stores only the model's **primary key**, then re-fetches a fresh instance from the DB when the job runs — so a row deleted in the meantime throws `ModelNotFoundException`." }
   ],
 
   cheatsheet: [
@@ -200,6 +248,8 @@
     { label: "Validate", code: "$request->validate([...])" },
     { label: "Eager load", code: "Post::with('author')->get()" },
     { label: "Queue worker", code: "php artisan queue:work" },
+    { label: "Restart workers", code: "php artisan queue:restart" },
+    { label: "Cache config (prod)", code: "php artisan config:cache" },
     { label: "REPL", code: "php artisan tinker" }
   ]
 });
