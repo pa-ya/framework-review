@@ -166,6 +166,70 @@
       ]
     },
     {
+      id: "background-jobs",
+      title: "Background work: which tool when",
+      level: "core",
+      body: [
+        { type: "p", text: "\"Do this after responding\" has three very different answers in FastAPI, and picking the wrong one is a classic production mistake. The deciding questions: does the work need to survive a restart/crash? Does it need retries, scheduling, or a separate machine? Is it CPU-heavy?" },
+        { type: "table", headers: ["Tool", "Runs where", "Use for", "Don't use for"], rows: [
+          ["`BackgroundTasks`", "same process, after response", "fire-and-forget side effects: send an email, write a log, bust a cache", "anything you must not lose, retries, CPU work"],
+          ["`Celery`", "separate worker process(es)", "durable jobs, retries, scheduled/periodic, fan-out, heavy CPU", "trivial fast tasks (overkill)"],
+          ["`ARQ` / `Dramatiq` / `TaskIQ`", "separate async worker", "same as Celery but you want an **asyncio-native** worker", "if your team already knows Celery"],
+          ["`asyncio.create_task`", "same event loop", "concurrent I/O *within* one request you `await` before returning", "work that outlives the request (it can be cancelled)"]
+        ] },
+        { type: "callout", variant: "warn", text: "`BackgroundTasks` runs **in the same process** and holds no queue: if the server restarts, in-flight tasks vanish, and an unhandled exception in the task is swallowed (logged, never retried). The moment you need durability, retries, or scheduling, move to Celery/ARQ — don't grow `BackgroundTasks` into a job system." },
+        { type: "callout", variant: "gotcha", text: "A `BackgroundTasks` function that is `async def` runs on the event loop; a plain `def` one runs in the threadpool. A **blocking** call in an `async def` background task still blocks the whole server — the same async rule applies here." }
+      ]
+    },
+    {
+      id: "celery",
+      title: "Celery: durable & scheduled task queue",
+      level: "core",
+      body: [
+        { type: "p", text: "Celery is the standard for real background jobs: a **broker** (Redis or RabbitMQ) holds the queue, one or more **worker** processes pull and run tasks, and an optional **result backend** stores return values. Your FastAPI process only *enqueues* — it never runs the job — so heavy/slow work never touches the request path." },
+        { type: "code", lang: "bash", code: "pip install \"celery[redis]\"\n# you also need a running Redis: docker run -p 6379:6379 redis" },
+        { type: "code", lang: "py", code: "# worker.py — the Celery app + tasks\nfrom celery import Celery\n\ncelery = Celery(\n    \"myapp\",\n    broker=\"redis://localhost:6379/0\",        # queue\n    backend=\"redis://localhost:6379/1\",       # result store (optional)\n)\ncelery.conf.task_track_started = True\n\n@celery.task(bind=True, max_retries=3, default_retry_delay=10)\ndef send_report(self, user_id: int):\n    try:\n        data = build_report(user_id)          # slow / CPU heavy — fine, it's off-request\n        email_report(user_id, data)\n        return {\"user_id\": user_id, \"ok\": True}\n    except TransientError as exc:\n        # exponential backoff retry; raises Retry, not the error\n        raise self.retry(exc=exc, countdown=2 ** self.request.retries)" },
+        { type: "code", lang: "bash", code: "# run a worker (separate process from uvicorn) — concurrency = worker processes\ncelery -A worker.celery worker --loglevel=info --concurrency=4\n\n# a beat scheduler for periodic tasks (see below)\ncelery -A worker.celery beat --loglevel=info\n\n# live dashboard\npip install flower && celery -A worker.celery flower   # http://localhost:5555" },
+        { type: "heading", text: "Enqueue from an endpoint & poll status" },
+        { type: "code", lang: "py", code: "from fastapi import FastAPI, HTTPException\nfrom celery.result import AsyncResult\nfrom worker import celery, send_report\n\napp = FastAPI()\n\n@app.post(\"/reports\", status_code=202)         # 202 Accepted = \"queued, not done\"\nasync def queue_report(user_id: int):\n    task = send_report.delay(user_id)          # .delay() enqueues, returns immediately\n    return {\"task_id\": task.id}\n\n@app.get(\"/reports/{task_id}\")\nasync def report_status(task_id: str):\n    res = AsyncResult(task_id, app=celery)\n    return {\"state\": res.state,                 # PENDING/STARTED/RETRY/SUCCESS/FAILURE\n            \"result\": res.result if res.successful() else None}" },
+        { type: "callout", variant: "gotcha", text: "**Never pass ORM objects or DB sessions to a task** — arguments are serialized (JSON/pickle) and the task runs in a *different* process. Pass the **id**, then re-load the row inside the task with its own session. Same for the return value: return plain data, not a SQLAlchemy model." },
+        { type: "heading", text: "Scheduled / periodic tasks (beat)" },
+        { type: "code", lang: "py", code: "from celery.schedules import crontab\n\ncelery.conf.beat_schedule = {\n    \"nightly-cleanup\": {\n        \"task\": \"worker.cleanup_expired\",\n        \"schedule\": crontab(hour=3, minute=0),   # every day 03:00\n    },\n    \"every-30s\": {\"task\": \"worker.heartbeat\", \"schedule\": 30.0},\n}" },
+        { type: "callout", variant: "warn", text: "Celery tasks are **synchronous** by default and each worker is a separate OS process — they do **not** share your FastAPI event loop or `lifespan` state. Create connections (DB, HTTP) inside the task or via Celery signals (`worker_process_init`), not by importing your app's async pool." },
+        { type: "callout", variant: "tip", text: "Prefer an **asyncio-native** worker? `ARQ` (by the pydantic author, Redis-based) or `TaskIQ` let you write `async def` tasks and `await` your existing async DB code directly — less impedance mismatch with FastAPI than Celery's sync model." }
+      ]
+    },
+    {
+      id: "redis",
+      title: "Redis: caching, rate limiting & sessions",
+      level: "core",
+      body: [
+        { type: "p", text: "Redis is the Swiss-army knife next to FastAPI: a response/data **cache**, a **rate-limit** counter, a **session/lock** store, and a **pub/sub** bus. Use the async client (`redis.asyncio`) and open one pooled connection in the lifespan, not per request." },
+        { type: "code", lang: "bash", code: "pip install redis     # modern redis-py includes redis.asyncio (aioredis is merged in)" },
+        { type: "code", lang: "py", code: "# one shared, pooled client for the app lifetime\nimport redis.asyncio as redis\nfrom contextlib import asynccontextmanager\nfrom fastapi import FastAPI\n\n@asynccontextmanager\nasync def lifespan(app: FastAPI):\n    app.state.redis = redis.from_url(\"redis://localhost:6379\", decode_responses=True)\n    yield\n    await app.state.redis.aclose()\n\napp = FastAPI(lifespan=lifespan)" },
+        { type: "heading", text: "Cache-aside (the manual pattern)" },
+        { type: "code", lang: "py", code: "import json\nfrom fastapi import Depends, Request\n\ndef get_redis(request: Request) -> redis.Redis:\n    return request.app.state.redis\n\n@app.get(\"/products/{pid}\")\nasync def product(pid: int, r: redis.Redis = Depends(get_redis)):\n    key = f\"product:{pid}\"\n    if cached := await r.get(key):        # 1. try cache\n        return json.loads(cached)\n    data = await load_product(pid)         # 2. miss -> source of truth\n    await r.set(key, json.dumps(data), ex=60)   # 3. store with 60s TTL\n    return data\n\n# invalidate on write\n@app.put(\"/products/{pid}\")\nasync def update(pid: int, body: dict, r: redis.Redis = Depends(get_redis)):\n    await save_product(pid, body)\n    await r.delete(f\"product:{pid}\")       # bust the cache\n    return {\"ok\": True}" },
+        { type: "heading", text: "Decorator caching with fastapi-cache2" },
+        { type: "code", lang: "py", code: "# pip install fastapi-cache2[redis]\nfrom fastapi_cache import FastAPICache\nfrom fastapi_cache.backends.redis import RedisBackend\nfrom fastapi_cache.decorator import cache\n\n# in lifespan: FastAPICache.init(RedisBackend(app.state.redis), prefix=\"cache\")\n\n@app.get(\"/expensive\")\n@cache(expire=30)                     # caches the JSON response for 30s, keyed by path+query\nasync def expensive():\n    return await slow_aggregate()" },
+        { type: "heading", text: "Rate limiting" },
+        { type: "code", lang: "py", code: "# simplest: a fixed-window counter with INCR + EXPIRE (atomic-ish)\nasync def rate_limit(r: redis.Redis, ip: str, limit=100, window=60):\n    key = f\"rl:{ip}\"\n    hits = await r.incr(key)\n    if hits == 1:\n        await r.expire(key, window)    # start the window on first hit\n    if hits > limit:\n        raise HTTPException(429, \"Too Many Requests\")\n\n# or use a library: `slowapi` (Flask-Limiter port) gives @limiter.limit(\"5/minute\")" },
+        { type: "callout", variant: "tip", text: "For production rate limits use a **sliding-window** or **token-bucket** Lua script (atomic in one round-trip) rather than INCR/EXPIRE, which has an edge race and allows bursts at window boundaries. `slowapi` and `fastapi-limiter` ship correct implementations." },
+        { type: "callout", variant: "gotcha", text: "`decode_responses=True` gives you `str` back instead of `bytes` — pick one and be consistent, or your cache keys/`json.loads` will fail on the mismatch. And always set a **TTL** (`ex=`) on cache keys; unbounded keys are how Redis silently fills up." }
+      ]
+    },
+    {
+      id: "uploads",
+      title: "File uploads & serving files",
+      level: "core",
+      body: [
+        { type: "p", text: "Form and file input needs `python-multipart` installed. Use `UploadFile` (spooled to disk above a threshold, so big files don't eat RAM) rather than `bytes`, and stream large files to storage instead of `await file.read()`-ing the whole thing." },
+        { type: "code", lang: "bash", code: "pip install python-multipart" },
+        { type: "code", lang: "py", code: "from fastapi import FastAPI, UploadFile, File, Form, HTTPException\nimport shutil, uuid\nfrom pathlib import Path\n\nUPLOAD_DIR = Path(\"uploads\"); UPLOAD_DIR.mkdir(exist_ok=True)\n\n@app.post(\"/upload\")\nasync def upload(file: UploadFile, note: str = Form(\"\")):\n    if file.content_type not in {\"image/png\", \"image/jpeg\"}:\n        raise HTTPException(415, \"Only PNG/JPEG allowed\")\n    dest = UPLOAD_DIR / f\"{uuid.uuid4()}_{file.filename}\"\n    # stream copy — never loads the whole file into memory\n    with dest.open(\"wb\") as buffer:\n        shutil.copyfileobj(file.file, buffer)\n    return {\"stored\": dest.name, \"note\": note, \"size\": dest.stat().st_size}\n\n# multiple files\n@app.post(\"/gallery\")\nasync def gallery(files: list[UploadFile]):\n    return {\"count\": len(files), \"names\": [f.filename for f in files]}" },
+        { type: "code", lang: "py", code: "# serving files back\nfrom fastapi.responses import FileResponse\nfrom fastapi.staticfiles import StaticFiles\n\napp.mount(\"/static\", StaticFiles(directory=\"public\"), name=\"static\")   # whole dir\n\n@app.get(\"/download/{name}\")\nasync def download(name: str):\n    return FileResponse(UPLOAD_DIR / name, filename=name)   # sets Content-Disposition" },
+        { type: "callout", variant: "gotcha", text: "Validate on **content**, not just the extension or client-sent `content_type` (both are spoofable). Cap the size (reject early via a `Content-Length` check or a streaming counter), and never build the save path directly from `file.filename` — a name like `../../etc/passwd` is a path-traversal attack. Generate your own name (UUID) as above." }
+      ]
+    },
+    {
       id: "config",
       title: "Settings & config",
       level: "core",

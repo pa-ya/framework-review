@@ -5,6 +5,7 @@
   tagline: "Opinionated, **Angular-inspired** Node framework: modules, DI, and decorators with a full request lifecycle (guards, interceptors, pipes, filters).",
   color: "#e0234e",
   readMinutes: 18,
+  group: "TypeScript",
 
   sections: [
     {

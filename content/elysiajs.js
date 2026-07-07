@@ -5,6 +5,7 @@
   tagline: "Bun-first, **end-to-end type-safe** framework: a fluent chainable API, schema validation with `t`, lifecycle hooks, and the Eden typed client.",
   color: "#a855f7",
   readMinutes: 14,
+  group: "TypeScript",
 
   sections: [
     {

@@ -5,6 +5,7 @@
   tagline: "Full-stack React framework with **file-based routing**, **Server Components**, route handlers, and server actions. This deck focuses on the **App Router**.",
   color: "#ededed",
   readMinutes: 19,
+  group: "TypeScript",
 
   sections: [
     {
