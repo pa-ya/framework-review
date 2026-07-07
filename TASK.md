@@ -365,3 +365,20 @@ framework fits. Examples to include:
 - [x] Phase 4 — review features (progress, search, flashcards/quiz, shortcuts)
 - [x] Phase 5 — polish (animations, responsive, print, reduced-motion)
 - [x] Phase 6 — QA & finalize (browser-verified dark/light/mobile/flashcards, README)
+
+### Round 2 — review pass + new sections (2026-07-07)
+
+- [x] Technical accuracy review of all 9 original frameworks; fixes applied:
+  - FastAPI: passlib → **pwdlib/Argon2** (passlib unmaintained), pyjwt over python-jose, added **async SQLAlchemy** (AsyncSession).
+  - NestJS: `emitDecoratorMetadata` note, added **JwtModule** wiring + token signing.
+  - Go Echo: **echo v5** existence note, added **graceful shutdown**.
+  - Go chi: added **http.Server timeouts** (Slowloris) + shutdown note.
+  - Rust Axum: added **0.8 `FromRequestParts` without `#[async_trait]`** extractor; tightened `/{id}` panic wording.
+  - Elysia: **`@elysiajs/swagger` → `@elysiajs/openapi`**, fixed `jwt.verify` Bearer-prefix bug.
+  - Next.js: middleware Edge/Node runtime + `proxy.ts` (Next 16) note, added **parallel/intercepting routes**, fixed cache comment.
+  - Django: added **`Q()`/`F()`** and `transaction.atomic`.
+  - Laravel: corrected starter kits (React/Vue/Livewire since L12), added **Sanctum two-modes** gotcha.
+- [x] Renderer fix: implemented `*emphasis*` in `inline()` (was documented but unimplemented — ~592 usages across content were showing literal asterisks).
+- [x] New content: **Go Standard Library** (net/http, 1.22 ServeMux, slog), **Rust Anchor** (Solana), **Qt** (C++), **Drogon** (C++).
+- [x] Sidebar: collapsible **grouped nav** — Go (Standard Library / chi / Echo), Rust (Axum / Anchor), C++ (Qt / Drogon); auto-expands the active group.
+- [x] Re-validated all 14 content files (0 structural errors) + browser-verified new sections and grouping.

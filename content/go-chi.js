@@ -2,6 +2,7 @@
   id: "go-chi",
   name: "Go chi",
   language: "Go",
+  group: "Go",
   tagline: "A **lightweight, idiomatic** router that is 100% `net/http` compatible — no framework lock-in, just composable middleware and sub-routers.",
   color: "#4a5568",
   readMinutes: 12,
@@ -28,7 +29,9 @@
       level: "core",
       body: [
         { type: "code", lang: "bash", code: "go mod init github.com/me/myapi\ngo get github.com/go-chi/chi/v5" },
-        { type: "code", lang: "go", code: "package main\n\nimport (\n\t\"net/http\"\n\t\"github.com/go-chi/chi/v5\"\n\t\"github.com/go-chi/chi/v5/middleware\"\n)\n\nfunc main() {\n\tr := chi.NewRouter()\n\tr.Use(middleware.Logger)\n\tr.Use(middleware.Recoverer)\n\n\tr.Get(\"/\", func(w http.ResponseWriter, r *http.Request) {\n\t\tw.Write([]byte(\"hello\"))\n\t})\n\n\thttp.ListenAndServe(\":8080\", r)   // r is a standard http.Handler\n}" }
+        { type: "code", lang: "go", code: "package main\n\nimport (\n\t\"net/http\"\n\t\"github.com/go-chi/chi/v5\"\n\t\"github.com/go-chi/chi/v5/middleware\"\n)\n\nfunc main() {\n\tr := chi.NewRouter()\n\tr.Use(middleware.Logger)\n\tr.Use(middleware.Recoverer)\n\n\tr.Get(\"/\", func(w http.ResponseWriter, r *http.Request) {\n\t\tw.Write([]byte(\"hello\"))\n\t})\n\n\thttp.ListenAndServe(\":8080\", r)   // r is a standard http.Handler\n}" },
+        { type: "callout", variant: "gotcha", text: "`http.ListenAndServe(\":8080\", r)` uses a default server with **no timeouts** (Slowloris risk) and swallows the returned error. In production build the `http.Server` explicitly." },
+        { type: "code", lang: "go", code: "srv := &http.Server{\n\tAddr:              \":8080\",\n\tHandler:           r,\n\tReadHeaderTimeout: 5 * time.Second,\n\tReadTimeout:       15 * time.Second,\n\tWriteTimeout:      15 * time.Second,\n\tIdleTimeout:       60 * time.Second,\n}\nlog.Fatal(srv.ListenAndServe())   // then srv.Shutdown(ctx) on SIGTERM to drain" }
       ]
     },
     {

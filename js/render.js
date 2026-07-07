@@ -18,6 +18,8 @@
       .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     s = s.replace(/`([^`]+)`/g, '<code class="inline">$1</code>');
     s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    // single-asterisk *emphasis* — guarded so spaced math ("N * M") isn't matched
+    s = s.replace(/\*(?=\S)([^*\n]+?)(?<=\S)\*/g, "<em>$1</em>");
     s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g,
       '<a class="inline-link" href="$2" target="_blank" rel="noopener">$1</a>');
     return s;

@@ -1,10 +1,19 @@
 # Framework Review Deck ⚡
 
-A static, offline web app for **reviewing** 9 backend frameworks — a fast refresher for
-things you already learned but forget: init, core syntax, signature features, ORMs, auth,
-and gotchas. Each framework is a 10–20 minute read.
+A static, offline web app for **reviewing** backend (and adjacent) frameworks — a fast
+refresher for things you already learned but forget: init, core syntax, signature features,
+ORMs, auth, and gotchas. Most sections are a 10–20 minute read (Qt is longer by design).
 
-**Frameworks:** FastAPI · NestJS · Go Echo · Go chi · Rust Axum · ElysiaJS · Next.js · Django · Laravel — plus a **Practice & Projects** section (cross-framework comparison + project ideas).
+**Sections:**
+
+- **FastAPI** (Python) · **NestJS** (TypeScript)
+- **Go** — Standard Library (net/http) · chi · Echo
+- **Rust** — Axum · Anchor (Solana on-chain programs)
+- **ElysiaJS** (Bun) · **Next.js** · **Django** · **Laravel**
+- **C++** — Qt · Drogon
+- **Practice & Projects** — cross-framework comparison + project ideas
+
+Related sections are grouped in the sidebar under a collapsible parent (**Go**, **Rust**, **C++**).
 
 ## Run it
 

@@ -60,7 +60,10 @@
         { type: "code", lang: "py", code: "Post.objects.all()\nPost.objects.filter(published=True).exclude(title='')\nPost.objects.get(id=1)                     # raises DoesNotExist / MultipleObjectsReturned\nPost.objects.filter(author__name='Ada')    # traverse relations with __\nPost.objects.filter(title__icontains='django').order_by('-created_at')[:10]\nPost.objects.create(title='Hi', body='...', author=a)\nPost.objects.count()\n\n# aggregation\nfrom django.db.models import Count\nAuthor.objects.annotate(n=Count('posts')).filter(n__gt=5)" },
         { type: "p", text: "QuerySets are **lazy** — no query runs until you iterate, slice, or evaluate them." },
         { type: "code", lang: "py", code: "# fix N+1 queries:\nPost.objects.select_related('author')      # FK/one-to-one -> SQL JOIN\nPost.objects.prefetch_related('tags')      # M2M/reverse FK -> 2nd query" },
-        { type: "callout", variant: "warn", text: "**N+1 queries** are Django's most common performance bug: looping over posts and accessing `post.author` fires one query per post. Use `select_related` (FK) / `prefetch_related` (M2M) to batch them." }
+        { type: "callout", variant: "warn", text: "**N+1 queries** are Django's most common performance bug: looping over posts and accessing `post.author` fires one query per post. Use `select_related` (FK) / `prefetch_related` (M2M) to batch them." },
+        { type: "heading", text: "Q() and F() objects" },
+        { type: "code", lang: "py", code: "from django.db.models import Q, F\n\n# Q(): OR / complex boolean logic\nPost.objects.filter(Q(published=True) | Q(author__name='Ada'))\n\n# F(): reference a column server-side -> atomic, race-free update\nPost.objects.filter(id=1).update(views=F('views') + 1)" },
+        { type: "callout", variant: "tip", text: "Wrap multi-step writes in `with transaction.atomic():` (or the `@transaction.atomic` decorator) so they commit or roll back together. Setting `ATOMIC_REQUESTS=True` wraps every request in a transaction." }
       ]
     },
     {

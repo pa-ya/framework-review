@@ -4,6 +4,7 @@
   language: "C++ · Qt",
   tagline: "The cross-platform C++ framework — **signals & slots**, a rich object model, Widgets **and** QML for building native GUIs, plus batteries-included core, network and concurrency modules.",
   color: "#41CD52",
+  group: "C++",
   readMinutes: 40,
 
   sections: [

@@ -46,7 +46,10 @@
           ["`route.ts`", "API endpoint (no UI)"],
           ["`template.tsx`", "like layout but re-mounts each navigation"]
         ] },
-        { type: "callout", variant: "gotcha", text: "In Next.js 15, `params` and `searchParams` are **async** (Promises) — you must `await` them. Older code accessed them synchronously." }
+        { type: "callout", variant: "gotcha", text: "In Next.js 15, `params` and `searchParams` are **async** (Promises) — you must `await` them. Older code accessed them synchronously." },
+        { type: "heading", text: "Parallel & intercepting routes" },
+        { type: "p", text: "**Parallel routes** (`@slot`) render multiple pages into one layout as named props; **intercepting routes** (`(.)`, `(..)`) load a route within the current layout — together they power modals that survive refresh and deep-linking." },
+        { type: "code", lang: "text", code: "app/\n  layout.tsx            // Layout({ children, team, analytics })\n  @team/page.tsx        // parallel slot -> `team` prop\n  @analytics/page.tsx   // parallel slot -> `analytics` prop\n  feed/\n    (.)photo/[id]/page.tsx   // intercepts /photo/:id -> render as a modal over the feed" }
       ]
     },
     {
@@ -94,7 +97,7 @@
       level: "core",
       body: [
         { type: "p", text: "In Server Components you just `await` your data (DB call or `fetch`). Next extends `fetch` with caching controls." },
-        { type: "code", lang: "tsx", code: "// cached until manually revalidated (default was 'force-cache'; Next 15 defaults fetch to no-store)\nconst res = await fetch('https://api.example.com/data', {\n  next: { revalidate: 60 },        // ISR: re-fetch at most every 60s\n  // cache: 'no-store',            // always fresh (dynamic)\n  // next: { tags: ['data'] },     // tag for revalidateTag('data')\n});\nconst data = await res.json();" },
+        { type: "code", lang: "tsx", code: "// Next 15 defaults fetch to no-store; opt into caching per call\nconst res = await fetch('https://api.example.com/data', {\n  next: { revalidate: 60 },        // ISR: re-fetch at most every 60s\n  // cache: 'no-store',            // always fresh (dynamic)\n  // next: { tags: ['data'] },     // tag for revalidateTag('data')\n});\nconst data = await res.json();" },
         { type: "table", headers: ["Goal", "How"], rows: [
           ["Static, revalidate on a timer", "`next: { revalidate: N }` (ISR)"],
           ["Always dynamic/fresh", "`cache: 'no-store'`"],
@@ -125,7 +128,7 @@
       body: [
         { type: "p", text: "A single `middleware.ts` at the project root runs on the **edge** before matched requests — ideal for auth redirects, rewrites, locale detection." },
         { type: "code", lang: "ts", code: "// middleware.ts\nimport { NextResponse } from 'next/server';\nimport type { NextRequest } from 'next/server';\n\nexport function middleware(req: NextRequest) {\n  const token = req.cookies.get('session')?.value;\n  if (!token && req.nextUrl.pathname.startsWith('/dashboard')) {\n    return NextResponse.redirect(new URL('/login', req.url));\n  }\n  return NextResponse.next();\n}\n\nexport const config = { matcher: ['/dashboard/:path*'] };" },
-        { type: "callout", variant: "warn", text: "Middleware runs in the **Edge runtime** — no Node APIs, no direct DB drivers, keep it light. Do heavy auth checks in the page/route, not here." }
+        { type: "callout", variant: "warn", text: "Middleware defaults to the **Edge runtime** (no Node APIs / DB drivers) — keep it light. Since 15.5 you can opt into Node with `export const runtime = 'nodejs'`; in Next 16 the file is renamed `proxy.ts` and runs on Node. Still do heavy auth in the page/route, not here." }
       ]
     },
     {

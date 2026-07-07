@@ -79,6 +79,7 @@ strong { color: var(--text); font-weight: 700; }
   background: var(--accent-soft); color: var(--text);
   padding: 1px 6px; border-radius: 5px; border: 1px solid var(--border);
 }
+.section em, .callout em, td em, .hero-tagline em { font-style: italic; color: var(--text); }
 
 /* ---------- Code blocks ---------- */
 .codeblock {

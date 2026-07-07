@@ -2,6 +2,7 @@
   id: "rust-axum",
   name: "Rust Axum",
   language: "Rust",
+  group: "Rust",
   tagline: "Ergonomic async web framework from the **Tokio** team — routing built on **extractors**, middleware via **Tower**, no macros required.",
   color: "#dea584",
   readMinutes: 18,
@@ -130,7 +131,9 @@
       body: [
         { type: "code", lang: "bash", code: "cargo add jsonwebtoken\ncargo add serde --features derive" },
         { type: "code", lang: "rust", code: "use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};\n\n#[derive(serde::Serialize, serde::Deserialize)]\nstruct Claims { sub: String, exp: usize }\n\n// sign\nlet token = encode(&Header::default(), &claims,\n    &EncodingKey::from_secret(secret))?;\n\n// verify inside a handler/extractor\nlet data = decode::<Claims>(&token,\n    &DecodingKey::from_secret(secret), &Validation::default())?;" },
-        { type: "p", text: "For clean ergonomics, implement `FromRequestParts` on an `AuthUser` type so protected handlers just take `user: AuthUser` as an argument." }
+        { type: "p", text: "For clean ergonomics, implement `FromRequestParts` on an `AuthUser` type so protected handlers just take `user: AuthUser` as an argument." },
+        { type: "callout", variant: "note", text: "**Axum 0.8:** `FromRequestParts` / `FromRequest` no longer need `#[async_trait]` — implement the async method natively. (Also new in 0.8: `Option<T>` as an extractor now requires `T: OptionalFromRequestParts`.)" },
+        { type: "code", lang: "rust", code: "use axum::{extract::FromRequestParts, http::{request::Parts, StatusCode}};\n\nstruct AuthUser { id: String }\n\nimpl<S: Send + Sync> FromRequestParts<S> for AuthUser {\n    type Rejection = StatusCode;\n    // no #[async_trait] in 0.8\n    async fn from_request_parts(parts: &mut Parts, _s: &S) -> Result<Self, Self::Rejection> {\n        let token = parts.headers.get(\"authorization\")\n            .and_then(|v| v.to_str().ok())\n            .and_then(|v| v.strip_prefix(\"Bearer \"))\n            .ok_or(StatusCode::UNAUTHORIZED)?;\n        let claims = verify(token).map_err(|_| StatusCode::UNAUTHORIZED)?;\n        Ok(AuthUser { id: claims.sub })\n    }\n}" }
       ]
     },
     {
@@ -168,7 +171,7 @@
 
   gotchas: [
     "Body extractors (`Json`, `String`, `Form`, `Bytes`) must be the **last** handler argument — the body is read once.",
-    "Axum 0.8 uses `/{id}` path syntax; older `/:id` is 0.7 — mixing them fails to compile/route.",
+    "Axum 0.8 uses `/{id}` path syntax; the older `/:id` is 0.7 — using it in 0.8 panics when the router is built (a runtime panic, not a compile error).",
     "Tower layers apply outside-in: the **last** `.layer()` is outermost — order changes execution order.",
     "`sqlx::query!` macros need a live DB at compile time; run `cargo sqlx prepare` for offline/CI builds.",
     "Handlers must be `Send + 'static`; holding a non-`Send` value across an `.await` won't compile.",

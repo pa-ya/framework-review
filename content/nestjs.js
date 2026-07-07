@@ -15,7 +15,7 @@
         { type: "p", text: "Nest is a structured layer over Express (or Fastify). Its core idea is **modularity + dependency injection**: you build feature **modules** that expose **controllers** (HTTP) and **providers** (services/logic). Everything is wired with an IoC container." },
         { type: "list", items: [
           "**Controllers** handle routes; **Services (providers)** hold business logic; **Modules** group them.",
-          "Heavy use of **decorators** (`@Controller`, `@Injectable`, `@Get`) — enable `experimentalDecorators` (the CLI does this).",
+          "Heavy use of **decorators** (`@Controller`, `@Injectable`, `@Get`) — needs `experimentalDecorators` **and** `emitDecoratorMetadata` in tsconfig (the CLI sets both; the latter is what powers constructor-based DI and `class-validator`).",
           "Same code runs on **Express** or **Fastify** adapters.",
           "**Reach for it when:** you want structure, testability and enterprise conventions out of the box."
         ] }
@@ -147,7 +147,8 @@
       body: [
         { type: "code", lang: "bash", code: "npm i @nestjs/passport passport @nestjs/jwt passport-jwt\nnpm i -D @types/passport-jwt" },
         { type: "code", lang: "ts", code: "// jwt.strategy.ts\n@Injectable()\nexport class JwtStrategy extends PassportStrategy(Strategy) {\n  constructor() {\n    super({\n      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),\n      secretOrKey: process.env.JWT_SECRET,\n    });\n  }\n  validate(payload: any) { return { userId: payload.sub, email: payload.email }; }\n}\n\n// protect routes with the passport guard\n@UseGuards(AuthGuard('jwt'))\n@Get('profile')\nprofile(@Req() req) { return req.user; }" },
-        { type: "p", text: "Sign tokens with `JwtService` in your login handler after verifying the password (hash with `bcrypt`)." }
+        { type: "p", text: "Wire up `JwtModule` and issue a token in your login handler after verifying the password:" },
+        { type: "code", lang: "ts", code: "// auth.module.ts\n@Module({\n  imports: [\n    JwtModule.register({\n      secret: process.env.JWT_SECRET,\n      signOptions: { expiresIn: '30m' },\n    }),\n  ],\n  providers: [AuthService, JwtStrategy],\n})\nexport class AuthModule {}\n\n// auth.service.ts — issue a token after verifying the password\nasync login(user: { id: number; email: string }) {\n  const payload = { sub: user.id, email: user.email };\n  return { access_token: await this.jwt.signAsync(payload) };\n}" }
       ]
     },
     {

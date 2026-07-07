@@ -6,6 +6,8 @@
 
   function el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
 
+  const CHECK_SVG = '<svg class="check" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
   function buildSidebar() {
     const nav = document.getElementById("nav");
     nav.innerHTML = "";
@@ -14,7 +16,21 @@
     const main = fws.filter((f) => f.id !== "sample-projects");
 
     nav.appendChild(el("div", "nav-group-label", "Frameworks"));
-    main.forEach((fw, i) => nav.appendChild(navItem(fw, i)));
+
+    // Walk in order, folding consecutive same-group frameworks into a collapsible group.
+    let i = 0;
+    while (i < main.length) {
+      const fw = main[i];
+      if (fw.group) {
+        const name = fw.group;
+        const members = [];
+        while (i < main.length && main[i].group === name) { members.push(main[i]); i++; }
+        nav.appendChild(navGroup(name, members));
+      } else {
+        nav.appendChild(navItem(fw, i));
+        i++;
+      }
+    }
 
     if (sample) {
       nav.appendChild(el("div", "nav-group-label", "Practice"));
@@ -30,7 +46,40 @@
       `<span class="dot" style="background:${fw.color}"></span>` +
       `<span class="nav-name">${fw.name}</span>` +
       (fw.language ? `<span class="nav-lang">${fw.language}</span>` : "") +
-      '<svg class="check" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+      CHECK_SVG;
+    item.addEventListener("click", () => { select(fw.id); closeMobileNav(); });
+    return item;
+  }
+
+  // A collapsible parent (Go / Rust / C++) wrapping sub-items.
+  function navGroup(name, members) {
+    const wrap = el("div", "nav-group");
+    wrap.dataset.group = name;
+    const head = el("div", "nav-group-head");
+    head.innerHTML =
+      `<span class="dot" style="background:${members[0].color}"></span>` +
+      `<span class="nav-name">${name}</span>` +
+      `<span class="nav-group-count">${members.length}</span>` +
+      '<svg class="chev" viewBox="0 0 24 24" width="15" height="15"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    head.addEventListener("click", () => wrap.classList.toggle("is-open"));
+    wrap.appendChild(head);
+
+    const body = el("div", "nav-group-body");
+    const inner = el("div", "nav-group-inner");
+    members.forEach((m) => inner.appendChild(navSubItem(m)));
+    body.appendChild(inner);
+    wrap.appendChild(body);
+    return wrap;
+  }
+
+  function navSubItem(fw) {
+    const item = el("div", "nav-item is-sub");
+    item.dataset.fw = fw.id;
+    const label = fw.navLabel || fw.name.replace(/^(Go|Rust|C\+\+)\s+/i, "");
+    item.innerHTML =
+      `<span class="dot" style="background:${fw.color}"></span>` +
+      `<span class="nav-name">${label}</span>` +
+      CHECK_SVG;
     item.addEventListener("click", () => { select(fw.id); closeMobileNav(); });
     return item;
   }
@@ -41,6 +90,13 @@
     current = id;
 
     document.querySelectorAll(".nav-item").forEach((it) => it.classList.toggle("is-active", it.dataset.fw === id));
+
+    // keep the group containing the active item expanded
+    const activeItem = document.querySelector('.nav-item[data-fw="' + id + '"]');
+    if (activeItem) {
+      const grp = activeItem.closest(".nav-group");
+      if (grp) grp.classList.add("is-open");
+    }
 
     const content = document.getElementById("content");
     content.classList.add("switching");

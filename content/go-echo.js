@@ -2,6 +2,7 @@
   id: "go-echo",
   name: "Go Echo",
   language: "Go",
+  group: "Go",
   tagline: "High-performance, **batteries-included** Go web framework: a rich router, built-in middleware, binding & validation, and a handy `Context`.",
   color: "#00b5b8",
   readMinutes: 13,
@@ -27,7 +28,12 @@
       body: [
         { type: "code", lang: "bash", code: "mkdir myapi && cd myapi\ngo mod init github.com/me/myapi\ngo get github.com/labstack/echo/v4" },
         { type: "code", lang: "go", code: "// main.go\npackage main\n\nimport (\n\t\"net/http\"\n\t\"github.com/labstack/echo/v4\"\n\t\"github.com/labstack/echo/v4/middleware\"\n)\n\nfunc main() {\n\te := echo.New()\n\te.Use(middleware.Logger(), middleware.Recover())\n\n\te.GET(\"/\", func(c echo.Context) error {\n\t\treturn c.JSON(http.StatusOK, map[string]string{\"msg\": \"hello\"})\n\t})\n\n\te.Logger.Fatal(e.Start(\":8080\"))\n}" },
-        { type: "callout", variant: "tip", text: "Run with live reload using `air` (github.com/air-verse/air) — `air` watches and rebuilds; standard for Go dev." }
+        { type: "callout", variant: "tip", text: "Run with live reload using `air` (github.com/air-verse/air) — `air` watches and rebuilds; standard for Go dev." },
+        { type: "callout", variant: "note", text: "This deck targets **echo/v4** (stable, supported through end of 2026). **Echo v5** (`github.com/labstack/echo/v5`, released Jan 2026) is the new major line and reworks the middleware config API — check the migration guide before starting a fresh project on it." },
+        { type: "heading", text: "Graceful shutdown" },
+        { type: "p", text: "`e.Start` blocks. In production, run it in a goroutine and drain in-flight requests on `SIGINT`/`SIGTERM` — a Go must-know." },
+        { type: "code", lang: "go", code: "go func() {\n\tif err := e.Start(\":8080\"); err != nil && err != http.ErrServerClosed {\n\t\te.Logger.Fatal(err)\n\t}\n}()\n\nquit := make(chan os.Signal, 1)\nsignal.Notify(quit, os.Interrupt, syscall.SIGTERM)\n<-quit\n\nctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)\ndefer cancel()\nif err := e.Shutdown(ctx); err != nil {\n\te.Logger.Fatal(err)\n}" },
+        { type: "callout", variant: "tip", text: "Treat `http.ErrServerClosed` as a normal shutdown, not an error." }
       ]
     },
     {

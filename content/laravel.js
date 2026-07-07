@@ -109,7 +109,8 @@
       title: "Auth — Sanctum & starter kits",
       level: "core",
       body: [
-        { type: "p", text: "**Sanctum** is the go-to for SPA/API token auth; **Passport** for full OAuth2. Starter kits (**Breeze**, **Jetstream**) scaffold complete auth UIs." },
+        { type: "p", text: "**Sanctum** is the go-to for SPA/API token auth; **Passport** for full OAuth2. Since Laravel 12, `laravel new` scaffolds an official **React**, **Vue**, or **Livewire** starter kit (auth + settings UI built in). Breeze/Jetstream still exist but were dropped from the installer." },
+        { type: "callout", variant: "gotcha", text: "Sanctum has **two modes**: (1) **API tokens** — `createToken()` + `Authorization: Bearer`, for mobile/third-party clients; (2) **SPA auth** — cookie/session based with CSRF for a first-party SPA on the same top-level domain (set `SANCTUM_STATEFUL_DOMAINS`, hit `/sanctum/csrf-cookie`, then normal session login). Don't issue Bearer tokens to your own same-site SPA." },
         { type: "code", lang: "bash", code: "php artisan install:api        # installs Sanctum + api routes\n# issue a token after verifying credentials:" },
         { type: "code", lang: "php", code: "// login controller\n$user = User::where('email', $request->email)->first();\nif (!$user || !Hash::check($request->password, $user->password)) {\n    return response()->json(['message' => 'Invalid'], 401);\n}\n$token = $user->createToken('api')->plainTextToken;\nreturn ['token' => $token];\n\n// protect routes with the sanctum guard\nRoute::middleware('auth:sanctum')->get('/me', fn (Request $r) => $r->user());" }
       ]

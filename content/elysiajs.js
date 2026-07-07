@@ -92,11 +92,12 @@
     },
     {
       id: "official-plugins",
-      title: "Official plugins (swagger, cors, jwt)",
+      title: "Official plugins (openapi, cors, jwt)",
       level: "core",
       body: [
-        { type: "code", lang: "bash", code: "bun add @elysiajs/swagger @elysiajs/cors @elysiajs/jwt @elysiajs/cookie" },
-        { type: "code", lang: "ts", code: "import { swagger } from '@elysiajs/swagger';\nimport { cors } from '@elysiajs/cors';\nimport { jwt } from '@elysiajs/jwt';\n\nnew Elysia()\n  .use(cors())\n  .use(swagger())                          // interactive docs at /swagger\n  .use(jwt({ name: 'jwt', secret: process.env.JWT_SECRET! }))\n  .post('/sign', ({ jwt }) => jwt.sign({ sub: 'user1' }))\n  .get('/verify', async ({ jwt, headers, set }) => {\n    const payload = await jwt.verify(headers.authorization);\n    if (!payload) { set.status = 401; return 'bad token'; }\n    return payload;\n  })\n  .listen(3000);" }
+        { type: "code", lang: "bash", code: "bun add @elysiajs/openapi @elysiajs/cors @elysiajs/jwt @elysiajs/cookie" },
+        { type: "code", lang: "ts", code: "import { openapi } from '@elysiajs/openapi';\nimport { cors } from '@elysiajs/cors';\nimport { jwt } from '@elysiajs/jwt';\n\nnew Elysia()\n  .use(cors())\n  .use(openapi())                          // docs at /openapi, spec at /openapi/json\n  .use(jwt({ name: 'jwt', secret: process.env.JWT_SECRET! }))\n  .post('/sign', ({ jwt }) => jwt.sign({ sub: 'user1' }))\n  .get('/verify', async ({ jwt, headers, set }) => {\n    const token = headers.authorization?.split(' ')[1];   // strip \"Bearer \"\n    const payload = token && await jwt.verify(token);\n    if (!payload) { set.status = 401; return 'bad token'; }\n    return payload;\n  })\n  .listen(3000);" },
+        { type: "callout", variant: "note", text: "`@elysiajs/swagger` is deprecated — use `@elysiajs/openapi` (Scalar UI). Schemas written with `t` still auto-populate the spec." }
       ]
     },
     {
@@ -132,7 +133,7 @@
 
   packages: [
     { name: "elysia", why: "the framework (includes `t`)" },
-    { name: "@elysiajs/swagger", why: "OpenAPI/Swagger docs" },
+    { name: "@elysiajs/openapi", why: "OpenAPI docs (Scalar UI); replaces the deprecated @elysiajs/swagger" },
     { name: "@elysiajs/cors", why: "CORS" },
     { name: "@elysiajs/jwt", why: "JWT sign/verify" },
     { name: "@elysiajs/eden", why: "end-to-end typed client" },
@@ -167,7 +168,7 @@
     { label: "Set status", code: "set.status = 201" },
     { label: "Add to ctx", code: ".derive(() => ({ user }))" },
     { label: "Guard set", code: ".guard({ beforeHandle }, app => …)" },
-    { label: "Use plugin", code: ".use(swagger())" },
+    { label: "Use plugin", code: ".use(openapi())" },
     { label: "Typed client", code: "treaty<App>('host')" }
   ]
 });

@@ -107,6 +107,39 @@
 .nav-item.is-done .check { opacity: 1; transform: scale(1); }
 .nav-group-label { font-size: 10px; text-transform: uppercase; letter-spacing: .1em; color: var(--text-3); padding: var(--sp-3) 11px var(--sp-1); }
 
+/* ---------- Collapsible nav groups (Go / Rust / C++) ---------- */
+.nav-group { display: flex; flex-direction: column; }
+.nav-group-head {
+  display: flex; align-items: center; gap: var(--sp-3);
+  padding: 9px 11px; border-radius: var(--r-md);
+  cursor: pointer; color: var(--text-2); font-size: 14px; font-weight: 600;
+  border: 1px solid transparent; user-select: none;
+  transition: background var(--fast), color var(--fast);
+}
+.nav-group-head:hover { background: var(--surface); color: var(--text); }
+.nav-group-head .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 18%, transparent); }
+.nav-group-head .nav-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nav-group-count {
+  font-size: 10px; color: var(--text-3); background: var(--bg-3);
+  border: 1px solid var(--border); border-radius: 999px;
+  padding: 0 6px; min-width: 18px; text-align: center; line-height: 16px;
+}
+.nav-group-head .chev { color: var(--text-3); flex: none; transition: transform var(--fast); }
+.nav-group.is-open .nav-group-head .chev { transform: rotate(90deg); }
+.nav-group-body {
+  display: grid; grid-template-rows: 0fr;
+  transition: grid-template-rows var(--med) var(--ease-out);
+}
+.nav-group.is-open .nav-group-body { grid-template-rows: 1fr; }
+.nav-group-inner {
+  overflow: hidden; min-height: 0;
+  display: flex; flex-direction: column; gap: 2px;
+  margin: 2px 0 2px 15px; padding-left: 6px;
+  border-left: 1px solid var(--border);
+}
+.nav-item.is-sub { padding: 7px 10px; font-size: 13px; font-weight: 500; }
+.nav-item.is-sub .dot { width: 7px; height: 7px; }
+
 .sidebar-foot { margin-top: auto; padding-top: var(--sp-3); border-top: 1px solid var(--border); }
 
 /* ---------- Main ---------- */
