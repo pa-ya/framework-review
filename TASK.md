@@ -358,10 +358,10 @@ framework fits. Examples to include:
 ## 9. Progress Log
 
 - [x] Phase 0 planning — TASK.md created.
-- [ ] Phase 0 — scaffolding
-- [ ] Phase 1 — content research & authoring (per framework)
-- [ ] Phase 2 — shell & theming
-- [ ] Phase 3 — rendering engine
-- [ ] Phase 4 — review features
-- [ ] Phase 5 — polish
-- [ ] Phase 6 — QA & finalize
+- [x] Phase 0 — scaffolding (index.html, folder structure, schema doc)
+- [x] Phase 1 — content research & authoring — all 9 frameworks + sample-projects
+- [x] Phase 2 — shell & theming (dark/light, sidebar, progress ring)
+- [x] Phase 3 — rendering engine (blocks, highlighter, collapsibles, copy, TOC/scroll-spy)
+- [x] Phase 4 — review features (progress, search, flashcards/quiz, shortcuts)
+- [x] Phase 5 — polish (animations, responsive, print, reduced-motion)
+- [x] Phase 6 — QA & finalize (browser-verified dark/light/mobile/flashcards, README)
