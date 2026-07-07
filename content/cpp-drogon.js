@@ -24,6 +24,25 @@
       ]
     },
     {
+      id: "lifecycle",
+      title: "How a request flows (mental model)",
+      level: "core",
+      body: [
+        { type: "p", text: "Before the syntax, hold the shape of the pipeline in your head — it tells you *where* each Drogon concept plugs in. A connection is accepted on a listener, parsed into an `HttpRequestPtr`, then pushed through a chain of hooks before and after your handler runs, all on a **single event loop thread**." },
+        { type: "list", ordered: true, items: [
+          "**Accept & parse** — a listener accepts the socket; Trantor's event loop reads bytes and builds an immutable `HttpRequestPtr`.",
+          "**Pre-routing advice** (`registerPreRoutingAdvice`) — global AOP hook that sees *every* request before any route is matched (rate-limiting, global CORS, request logging).",
+          "**Routing** — Drogon matches the path + method against self-registered controllers / `registerHandler` routes.",
+          "**Post-routing advice** then **filters** — once a route is chosen, its `HttpFilter`s run (auth, validation). A filter can **short-circuit** with a response or **pass** to the next.",
+          "**Handler** — your controller method / lambda / coroutine runs and produces an `HttpResponsePtr` (via `callback(...)` or `co_return`).",
+          "**Post-handling advice** — global hook to mutate the outgoing response (security headers, timing).",
+          "**Send** — Drogon applies compression, caching and session cookies, then writes the response back on the same loop."
+        ] },
+        { type: "callout", variant: "note", text: "Two extension points, two scopes: **filters** are *per-route* middleware you attach by name; **advices** (AOP) are *global* lifecycle hooks registered once on `app()`. Reach for a filter for \"protect these endpoints,\" an advice for \"do X on every request.\"" },
+        { type: "callout", variant: "warn", text: "Every stage above happens on **one event-loop thread**. Nothing here is a thread pool per request — which is exactly why a single blocking call (sync DB, sleep, heavy CPU) in your handler stalls every other in-flight request on that loop. Stay non-blocking end to end." }
+      ]
+    },
+    {
       id: "setup",
       title: "Install & create a project",
       level: "core",
@@ -101,6 +120,22 @@
       ]
     },
     {
+      id: "uploads-static",
+      title: "File uploads, static files & downloads",
+      level: "core",
+      body: [
+        { type: "p", text: "For `multipart/form-data` uploads, parse the request with a **`MultiPartParser`**: it splits out the uploaded files (`getFiles()` → `HttpFile`) from the ordinary form fields (`getParameters()`). Each `HttpFile` can be streamed to disk with `save()`/`saveAs()` without you touching raw bytes." },
+        { type: "code", lang: "cpp", code: "#include <drogon/MultiPartParser.h>\nusing namespace drogon;\n\nvoid upload(const HttpRequestPtr &req,\n            std::function<void(const HttpResponsePtr &)> &&callback) {\n    MultiPartParser parser;\n    if (parser.parse(req) != 0 || parser.getFiles().empty()) {\n        auto r = HttpResponse::newHttpResponse();\n        r->setStatusCode(k400BadRequest);\n        callback(r);\n        return;\n    }\n    for (const HttpFile &f : parser.getFiles()) {\n        // saved under the configured upload_path (see config.json)\n        f.saveAs(\"uploads/\" + f.getFileName());   // or f.save() to keep the name\n        LOG_INFO << f.getFileName() << \" \" << f.fileLength() << \" bytes\";\n    }\n    // non-file fields from the same multipart body\n    std::string caption = parser.getParameter<std::string>(\"caption\");\n\n    Json::Value ret;\n    ret[\"count\"] = (int)parser.getFiles().size();\n    callback(HttpResponse::newHttpJsonResponse(ret));\n}" },
+        { type: "list", items: [
+          "**`HttpFile`** exposes `getFileName()`, `fileLength()`, `getContentType()`, `fileContent()` (a `string_view`), `save()`, `saveAs(path)`, and `getMd5()`.",
+          "The **upload directory** and max body size are config: `upload_path`, `client_max_body_size`, `client_max_memory_body_size` in `config.json`'s `app` block.",
+          "**Static files** in `document_root` are served automatically (with caching + ranges). Restrict types with `file_types` in config."
+        ] },
+        { type: "code", lang: "cpp", code: "// Serve a file as a download (Content-Disposition: attachment)\nauto resp = HttpResponse::newFileResponse(\n    \"/var/data/report.pdf\",   // path on disk\n    \"report-2026.pdf\",        // attachment filename shown to the browser\n    CT_APPLICATION_PDF);\ncallback(resp);\n\n// Or stream a large response without loading it all in memory\nauto stream = HttpResponse::newStreamResponse(\n    [](char *buf, size_t len) -> std::size_t { /* fill buf, return bytes; 0 = done */ return 0; },\n    \"big.csv\", CT_TEXT_PLAIN);" },
+        { type: "callout", variant: "gotcha", text: "Uploads over `client_max_body_size` are rejected before your handler runs — a mysterious 413/dropped request is almost always this limit. Raise it in config for large uploads, and prefer `newStreamResponse`/`newFileResponse` over building a giant `std::string` body in memory." }
+      ]
+    },
+    {
       id: "filters",
       title: "Filters (middleware) & CORS",
       level: "core",
@@ -114,6 +149,18 @@
           "Filters are also self-registering by class name — just define the class and reference the name."
         ] },
         { type: "link", url: "https://github.com/drogonframework/drogon/wiki/ENG-06-AOP-Aspect-Oriented-Programming", text: "Drogon wiki — AOP / advices (global request lifecycle hooks)" }
+      ]
+    },
+    {
+      id: "auth-jwt",
+      title: "Auth end-to-end: a JWT filter",
+      level: "core",
+      body: [
+        { type: "p", text: "Drogon has no bundled auth, so the idiomatic pattern is a **filter** that validates a `Bearer` token and stashes the decoded identity where the handler can read it. Drogon ships no JWT type either — pair it with a header-only library like **jwt-cpp**. The key trick: a filter passes data to the handler through the request's **attributes** map (`req->attributes()`)." },
+        { type: "code", lang: "cpp", code: "// filters/JwtAuth.h — validate 'Authorization: Bearer <token>'\n#pragma once\n#include <drogon/HttpFilter.h>\n#include <jwt-cpp/jwt.h>\nusing namespace drogon;\n\nclass JwtAuth : public drogon::HttpFilter<JwtAuth> {\n  public:\n    void doFilter(const HttpRequestPtr &req,\n                  FilterCallback &&fcb,\n                  FilterChainCallback &&fccb) override {\n        auto reject = [&](auto code){ auto r = HttpResponse::newHttpResponse();\n                                      r->setStatusCode(code); fcb(r); };\n        std::string h = req->getHeader(\"Authorization\");\n        if (h.rfind(\"Bearer \", 0) != 0) return reject(k401Unauthorized);\n        try {\n            auto decoded = jwt::decode(h.substr(7));\n            jwt::verify()\n                .allow_algorithm(jwt::algorithm::hs256{\"my-secret\"})\n                .with_issuer(\"my-app\")\n                .verify(decoded);\n            // hand the user id to the handler via request attributes\n            req->attributes()->insert(\n                \"user_id\", decoded.get_payload_claim(\"sub\").as_string());\n            fccb();                       // pass\n        } catch (...) {\n            reject(k401Unauthorized);      // bad/expired token\n        }\n    }\n};" },
+        { type: "code", lang: "cpp", code: "// Issue a token on login...\nstd::string token = jwt::create()\n    .set_issuer(\"my-app\")\n    .set_subject(std::to_string(user.getValueOfId()))\n    .set_expires_at(std::chrono::system_clock::now() + std::chrono::hours{24})\n    .sign(jwt::algorithm::hs256{\"my-secret\"});\n\n// ...attach the filter by class name, then read the identity in the handler\nMETHOD_LIST_BEGIN\nADD_METHOD_TO(Account::profile, \"/me\", Get, \"JwtAuth\");\nMETHOD_LIST_END\n\nvoid Account::profile(const HttpRequestPtr &req,\n                      std::function<void(const HttpResponsePtr &)> &&cb) const {\n    auto uid = req->getAttributes()->get<std::string>(\"user_id\");\n    // ...load and return the user\n}" },
+        { type: "callout", variant: "tip", text: "Stateless JWTs suit APIs (no server-side session store, scales across processes). If you instead want server-managed logins, enable Drogon **sessions** (`req->session()`) and gate routes on a session key — but that pins users to a session store. Keep the signing secret in `custom_config`, not source." },
+        { type: "callout", variant: "gotcha", text: "`req->attributes()` is the correct channel for filter→handler data — don't try to mutate the immutable request body. Always verify **expiry** and **algorithm** explicitly (`allow_algorithm`); accepting `alg: none` or an unverified token is a classic JWT vulnerability." }
       ]
     },
     {
@@ -218,6 +265,7 @@
     { name: "mysqlclient / mariadb", why: "MySQL/MariaDB client for the ORM" },
     { name: "sqlite3", why: "embedded SQLite backend for the ORM" },
     { name: "OpenSSL", why: "TLS listeners + hashing utilities" },
+    { name: "jwt-cpp", why: "header-only JWT create/verify (Drogon bundles no auth)" },
     { name: "CMake", why: "build system; find_package(Drogon)" },
     { name: "vcpkg / Conan", why: "package managers to pull Drogon prebuilt" }
   ],
@@ -228,6 +276,8 @@
     "**ORM models are generated from the live DB schema**, not migrations — re-run `drogon_ctl create model` and rebuild after every schema change or the compiled classes drift.",
     "**Build complexity:** Drogon is a compiled C++ dependency; mismatched compiler/C++ standard (coroutines need C++20) or a stale `ldconfig` cache cause confusing link/runtime errors.",
     "Handler **parameter count must match** the path placeholders (extras are pulled from the request via `fromRequest`); a mismatch yields silent mis-binding or 404s.",
+    "**Uploads over `client_max_body_size`** are rejected before your handler runs — raise it (and `upload_path`) in `config.json` for large files, and stream big responses via `newFileResponse`/`newStreamResponse`.",
+    "A **filter passes data to the handler** through `req->attributes()`, not by mutating the (immutable) request. When verifying JWTs, always pin the algorithm and check expiry.",
     "Responses are `shared_ptr` and some are cached by the framework — don't mutate a response after passing it to `callback`.",
     "`getDbClient()` returns nullptr if no `db_clients` entry matches the name — always configure the client before using `Mapper`."
   ],
@@ -242,7 +292,10 @@
     { q: "What does `Mapper<T>` provide over raw SQL?", a: "Typed CRUD (`findByPrimaryKey`, `findBy`, `insert`, `update`, `deleteByPrimaryKey`) with `Criteria` WHERE-builders, in async, future, and coroutine forms." },
     { q: "How do coroutine DB calls look, and what's the naming convention?", a: "Handler returns `drogon::Task<HttpResponsePtr>` and uses `co_await db->execSqlCoro(...)` or `CoroMapper<T>`. Every async API has a `Coro` twin; end with `co_return resp`." },
     { q: "What is the single most dangerous mistake in a Drogon handler?", a: "Blocking the event loop (sleep, sync DB, heavy CPU) — it freezes all requests on that loop. Keep handlers non-blocking / async." },
-    { q: "How do you register a WebSocket endpoint?", a: "Inherit `WebSocketController<T>`, override `handleNewMessage/handleNewConnection/handleConnectionClosed`, and map the path with `WS_PATH_ADD(\"/ws\", Get)` inside `WS_PATH_LIST_BEGIN/END`." }
+    { q: "How do you register a WebSocket endpoint?", a: "Inherit `WebSocketController<T>`, override `handleNewMessage/handleNewConnection/handleConnectionClosed`, and map the path with `WS_PATH_ADD(\"/ws\", Get)` inside `WS_PATH_LIST_BEGIN/END`." },
+    { q: "What's the difference between a filter and an AOP advice?", a: "A **filter** is *per-route* middleware attached by class name (auth/validation for specific endpoints). An **advice** (`registerPreRoutingAdvice`/`registerPostHandlingAdvice`) is a *global* lifecycle hook registered once on `app()` for every request." },
+    { q: "How do you handle a multipart file upload?", a: "Use `MultiPartParser`: `parser.parse(req)`, then `getFiles()` gives `HttpFile`s (`saveAs(path)`, `fileContent()`, `getContentType()`) and `getParameters()` gives the non-file fields. Cap size with `client_max_body_size` in config." },
+    { q: "How does an auth filter pass the decoded user to the handler?", a: "Through the request **attributes** map: `req->attributes()->insert(\"user_id\", id)` in the filter, then `req->getAttributes()->get<...>(\"user_id\")` in the handler — the request body itself is immutable." }
   ],
 
   cheatsheet: [
@@ -254,6 +307,9 @@
     { label: "JSON response", code: "callback(HttpResponse::newHttpJsonResponse(json));" },
     { label: "Coroutine query", code: "auto r = co_await db->execSqlCoro(\"SELECT 1\");" },
     { label: "ORM find", code: "Mapper<Users>(db).findByPrimaryKey(id, cb, errCb);" },
+    { label: "Save upload", code: "MultiPartParser p; p.parse(req); p.getFiles()[0].saveAs(path);" },
+    { label: "File download", code: "HttpResponse::newFileResponse(path, name, CT_APPLICATION_PDF);" },
+    { label: "Filter -> handler", code: "req->attributes()->insert(\"user_id\", id);" },
     { label: "CMake link", code: "target_link_libraries(app PRIVATE Drogon::Drogon)" }
   ]
 });

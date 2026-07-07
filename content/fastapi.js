@@ -5,6 +5,7 @@
   tagline: "Async Python APIs built on **type hints** — automatic validation, serialization and OpenAPI docs for free.",
   color: "#009688",
   readMinutes: 16,
+  group: "Python",
 
   sections: [
     {

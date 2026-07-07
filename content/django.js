@@ -5,6 +5,7 @@
   tagline: "The **batteries-included** Python framework: a powerful built-in ORM, auto admin, migrations, and (via **DRF**) a first-class REST toolkit.",
   color: "#0c4b33",
   readMinutes: 18,
+  group: "Python",
 
   sections: [
     {

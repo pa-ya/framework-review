@@ -193,6 +193,25 @@
       ]
     },
     {
+      id: "actions",
+      title: "Actions, menus, toolbars & dialogs",
+      level: "core",
+      body: [
+        { type: "p", text: "This is the glue that turns widgets into an actual application. The key abstraction is **`QAction`**: one object representing a user command (its text, icon, shortcut and enabled state). You create the action once and add it to a **menu**, a **toolbar** and a keyboard **shortcut** — all three fire the same `triggered()` signal, so there's a single place to handle \"Save\", \"Open\", etc." },
+        { type: "code", lang: "cpp", code: "// one QAction feeds menu + toolbar + shortcut\nauto *openAct = new QAction(QIcon(\":/icons/open.svg\"), tr(\"&Open...\"), this);\nopenAct->setShortcut(QKeySequence::Open);        // portable Ctrl+O / ⌘O\nopenAct->setStatusTip(tr(\"Open a file\"));\nconnect(openAct, &QAction::triggered, this, &MainWindow::openFile);\n\n// build the menu bar (QMainWindow gives you menuBar()/addToolBar())\nQMenu *fileMenu = menuBar()->addMenu(tr(\"&File\"));\nfileMenu->addAction(openAct);\nfileMenu->addSeparator();\nfileMenu->addAction(tr(\"E&xit\"), QKeySequence::Quit, this, &QWidget::close);\n\nQToolBar *bar = addToolBar(tr(\"Main\"));\nbar->addAction(openAct);                          // same action, same handler" },
+        { type: "list", items: [
+          "**`&` in text** marks the keyboard mnemonic (`&File` → Alt+F). Use **`QKeySequence::StandardKey`** (`Open`, `Save`, `Copy`, `Quit`...) so shortcuts match each OS's convention.",
+          "**Checkable / grouped:** `action->setCheckable(true)` makes a toggle; put mutually-exclusive toggles in a **`QActionGroup`** (like radio buttons — e.g. view modes).",
+          "**Enable/disable** an action (`setEnabled(false)`) and every menu item, toolbar button and shortcut updates together — the single-source-of-truth payoff.",
+          "**Context menus:** override `contextMenuEvent`, or set `setContextMenuPolicy(Qt::ActionsContextMenu)` so a widget's actions appear on right-click."
+        ] },
+        { type: "heading", text: "Standard dialogs" },
+        { type: "p", text: "Qt ships ready-made dialogs with **static convenience functions** — no subclassing needed. They return the user's choice directly (modal dialogs block via their own event loop until dismissed)." },
+        { type: "code", lang: "cpp", code: "#include <QFileDialog>\n#include <QMessageBox>\n#include <QInputDialog>\n\n// pick a file to open\nQString path = QFileDialog::getOpenFileName(this, tr(\"Open\"), QDir::homePath(),\n                                            tr(\"Text files (*.txt);;All files (*)\"));\nif (path.isEmpty()) return;   // user cancelled\n\n// ask a yes/no question\nauto btn = QMessageBox::question(this, tr(\"Quit\"), tr(\"Save before closing?\"),\n                                 QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);\nif (btn == QMessageBox::Save) save();\n\n// prompt for a value\nbool ok;\nQString name = QInputDialog::getText(this, tr(\"Name\"), tr(\"Your name:\"),\n                                     QLineEdit::Normal, {}, &ok);" },
+        { type: "callout", variant: "tip", text: "For a **custom** dialog, subclass `QDialog`, add a `QDialogButtonBox` (it lays out OK/Cancel in the platform's order), and connect its `accepted()`/`rejected()` to `accept()`/`reject()`. Show it modally with `exec()` (blocks, returns a result) or modelessly with `show()`." }
+      ]
+    },
+    {
       id: "events",
       title: "The event loop & event system",
       level: "core",
