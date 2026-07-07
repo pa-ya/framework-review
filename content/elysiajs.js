@@ -96,7 +96,7 @@
       title: "Official plugins (openapi, cors, jwt)",
       level: "core",
       body: [
-        { type: "code", lang: "bash", code: "bun add @elysiajs/openapi @elysiajs/cors @elysiajs/jwt @elysiajs/cookie" },
+        { type: "code", lang: "bash", code: "bun add @elysiajs/openapi @elysiajs/cors @elysiajs/jwt   # cookies are built into core" },
         { type: "code", lang: "ts", code: "import { openapi } from '@elysiajs/openapi';\nimport { cors } from '@elysiajs/cors';\nimport { jwt } from '@elysiajs/jwt';\n\nnew Elysia()\n  .use(cors())\n  .use(openapi())                          // docs at /openapi, spec at /openapi/json\n  .use(jwt({ name: 'jwt', secret: process.env.JWT_SECRET! }))\n  .post('/sign', ({ jwt }) => jwt.sign({ sub: 'user1' }))\n  .get('/verify', async ({ jwt, headers, set }) => {\n    const token = headers.authorization?.split(' ')[1];   // strip \"Bearer \"\n    const payload = token && await jwt.verify(token);\n    if (!payload) { set.status = 401; return 'bad token'; }\n    return payload;\n  })\n  .listen(3000);" },
         { type: "callout", variant: "note", text: "`@elysiajs/swagger` is deprecated — use `@elysiajs/openapi` (Scalar UI). Schemas written with `t` still auto-populate the spec." }
       ]
@@ -188,7 +188,7 @@
     { name: "@elysiajs/eden", why: "end-to-end typed client" },
     { name: "drizzle-orm + drizzle-kit", why: "Bun-friendly ORM + migrations" },
     { name: "@prisma/client", why: "alternative ORM" },
-    { name: "@elysiajs/cookie", why: "cookie handling" }
+    { name: "cookie (built-in)", why: "reactive `cookie` is part of Elysia core — @elysiajs/cookie is deprecated" }
   ],
 
   gotchas: [

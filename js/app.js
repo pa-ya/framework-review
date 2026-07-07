@@ -15,6 +15,18 @@
     }, 1600);
   };
 
+  // Compact "at a glance" line in the sidebar footer.
+  function renderDeckStats(fws) {
+    const box = document.getElementById("deckStats");
+    if (!box) return;
+    const frameworks = fws.filter((f) => f.id !== "sample-projects");
+    const sections = fws.reduce((n, f) => n + (f.sections || []).length, 0);
+    const minutes = fws.reduce((n, f) => n + (f.readMinutes || 0), 0);
+    const hrs = Math.floor(minutes / 60), mins = minutes % 60;
+    const time = hrs ? (hrs + "h " + (mins ? mins + "m" : "")).trim() : mins + "m";
+    box.innerHTML = "<b>" + frameworks.length + "</b> frameworks &middot; <b>" + sections + "</b> sections &middot; <b>~" + time + "</b> to review";
+  }
+
   function boot() {
     const fws = window.FRAMEWORKS || [];
     if (!fws.length) {
@@ -24,6 +36,7 @@
     }
 
     window.Nav.buildSidebar();
+    renderDeckStats(fws);
     window.Search.init();
     window.Flashcards.init();
     window.Nav.initShortcuts();

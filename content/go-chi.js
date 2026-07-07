@@ -133,7 +133,7 @@
 
         { type: "heading", text: "2. Reading path params — chi.URLParam, and it's always a string" },
         { type: "p", text: "Path values come from `chi.URLParam(r, name)` (not stdlib `r.PathValue`), and they're always strings — convert and validate yourself." },
-        { type: "code", lang: "go", code: "func getUser(w http.ResponseWriter, r *http.Request) {\n\tid, err := strconv.Atoi(chi.URLParam(r, \"id\"))   // {id} -> int\n\tif err != nil {\n\t\thttp.Error(w, \"id must be an integer\", http.StatusBadRequest)\n\t\treturn\n\t}\n\t_ = id\n}\n\n// wildcard params use the {name} form; catch-all is {name}* at the end:\n//   r.Get(\"/files/*\", h) -> chi.URLParam(r, \"*\")" },
+        { type: "code", lang: "go", code: "func getUser(w http.ResponseWriter, r *http.Request) {\n\tid, err := strconv.Atoi(chi.URLParam(r, \"id\"))   // {id} -> int\n\tif err != nil {\n\t\thttp.Error(w, \"id must be an integer\", http.StatusBadRequest)\n\t\treturn\n\t}\n\t_ = id\n}\n\n// named params use the {name} form; the catch-all is a bare trailing *:\n//   r.Get(\"/files/*\", h) -> chi.URLParam(r, \"*\")" },
 
         { type: "heading", text: "3. Sub-routers, Mount, and route-pattern conflicts" },
         { type: "p", text: "`Route` and `Mount` compose routers, but two patterns that can match the same request path panic at build time — chi rejects the ambiguity up front rather than picking a winner silently." },

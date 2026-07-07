@@ -34,8 +34,8 @@ open index.html          # macOS
 ## Features
 
 - 🌗 **Dark / light theme** — toggle with `t`, remembered across visits (respects your OS setting first time).
-- 🔎 **Global search** (`/`) — jump to any concept across all frameworks.
-- ✅ **Progress tracking** — mark sections *Reviewed*; the sidebar ring (gradient) shows overall coverage (saved locally).
+- 🔎 **Global search** (`/`) — jump to any concept, package, or cheat-card entry across all frameworks.
+- ✅ **Progress tracking** — mark sections *Reviewed*; the sidebar ring (gradient) shows overall coverage (saved locally), with an at-a-glance **deck-stats** line (frameworks · sections · total read time).
 - 🃏 **Flashcards + quiz** (`f`) — active-recall practice per framework.
 - 🧭 **Sticky nav + on-this-page TOC** with scroll-spy; the active item is kept in view and its group auto-expands.
 - 📊 **Reading-progress bar** under the top bar, plus a **back-to-top** button (or press `g` `g`).

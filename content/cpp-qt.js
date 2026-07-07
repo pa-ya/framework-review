@@ -35,7 +35,7 @@
           "Some modules are **GPL-only** for open-source users (e.g. Qt Charts, Data Visualization, Virtual Keyboard, Wayland Compositor) — using them under open source forces your app to GPL.",
           "**Commercial** license removes LGPL/GPL obligations (static linking, no relinking clause) and is required for many embedded/proprietary scenarios."
         ] },
-        { type: "callout", variant: "note", text: "This guide targets **Qt 6** (current series is 6.11, March 2026). The **LTS** releases are **6.2, 6.5, 6.8 and 6.11** — 6.9 and 6.10 are regular (non-LTS) releases, so prefer an LTS for long-lived projects. Qt 6 requires a **C++17** compiler and uses **CMake** as the recommended build system." }
+        { type: "callout", variant: "note", text: "This guide targets **Qt 6** (current series is 6.11, March 2026). The **LTS** releases are **6.2, 6.5 and 6.8** — 6.8 is the latest LTS, while 6.9, 6.10 and 6.11 are regular (non-LTS) releases, so prefer an LTS for long-lived projects. Qt 6 requires a **C++17** compiler and uses **CMake** as the recommended build system." }
       ]
     },
     {

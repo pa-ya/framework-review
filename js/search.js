@@ -23,6 +23,12 @@
       (fw.gotchas || []).forEach((g, i) => {
         index.push({ fw: fw.id, fwName: fw.name, color: fw.color, secId: "gotchas", title: "Gotcha", text: g.toLowerCase() });
       });
+      (fw.packages || []).forEach((p) => {
+        index.push({ fw: fw.id, fwName: fw.name, color: fw.color, secId: "packages", title: "📦 " + p.name, text: ((p.name || "") + " " + (p.why || "")).toLowerCase() });
+      });
+      (fw.cheatsheet || []).forEach((c) => {
+        index.push({ fw: fw.id, fwName: fw.name, color: fw.color, secId: "cheat", title: "⚡ " + (c.label || "Cheat"), text: ((c.label || "") + " " + (c.code || "")).toLowerCase() });
+      });
     });
   }
 

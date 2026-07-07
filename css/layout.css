@@ -141,6 +141,8 @@
 .nav-item.is-sub .dot { width: 7px; height: 7px; }
 
 .sidebar-foot { margin-top: auto; padding-top: var(--sp-3); border-top: 1px solid var(--border); }
+.deck-stats { font-size: 11px; line-height: 1.5; color: var(--muted); margin-bottom: var(--sp-2); letter-spacing: .01em; }
+.deck-stats b { color: var(--text); font-weight: 600; }
 
 /* ---------- Main ---------- */
 .main { min-width: 0; padding: var(--sp-6) var(--sp-6) var(--sp-7); }

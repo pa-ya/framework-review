@@ -27,27 +27,47 @@
       title: "Cross-framework comparison",
       level: "core",
       body: [
-        { type: "p", text: "A one-glance matrix. \"Batteries\" = how much comes built-in vs assembled from libraries." },
-        { type: "table", headers: ["Framework", "Lang", "Async", "Default ORM", "Validation", "Batteries"], rows: [
-          ["FastAPI", "Python", "native", "SQLAlchemy / SQLModel", "Pydantic", "medium"],
+        { type: "p", text: "A one-glance matrix of the **web/API backends** in this deck. \"Batteries\" = how much comes built-in vs assembled from libraries. (Qt is a desktop/embedded GUI toolkit and Anchor targets Solana on-chain programs, so they sit outside these web axes — see the signature-feature list below.)" },
+        { type: "table", headers: ["Framework", "Lang", "Async model", "Default ORM / DB", "Validation", "Batteries"], rows: [
+          ["FastAPI", "Python", "native async", "SQLAlchemy / SQLModel", "Pydantic", "medium"],
+          ["Django", "Python", "sync (+ async views)", "Django ORM (built-in)", "DRF serializers", "very high"],
+          ["Flask", "Python", "sync (WSGI)", "SQLAlchemy (extension)", "WTForms / marshmallow", "low (micro)"],
           ["NestJS", "TS", "native", "TypeORM / Prisma", "class-validator", "high"],
-          ["Echo", "Go", "goroutines", "GORM", "validator (plug-in)", "medium"],
-          ["chi", "Go", "goroutines", "sqlc / pgx (no ORM)", "DIY", "low (router only)"],
-          ["Axum", "Rust", "Tokio", "SQLx / SeaORM", "serde + validator", "low-medium"],
-          ["Elysia", "TS/Bun", "native", "Drizzle / Prisma", "`t` (TypeBox)", "medium"],
+          ["ElysiaJS", "TS/Bun", "native", "Drizzle / Prisma", "`t` (TypeBox)", "medium"],
           ["Next.js", "TS", "native", "Prisma / Drizzle", "zod", "high (full-stack)"],
-          ["Django", "Python", "sync (async views)", "Django ORM (built-in)", "DRF serializers", "very high"],
-          ["Laravel", "PHP", "sync (queues)", "Eloquent (built-in)", "Form Requests", "very high"]
+          ["Go stdlib", "Go", "goroutines", "database/sql + pgx", "DIY", "very low (stdlib)"],
+          ["chi", "Go", "goroutines", "sqlc / pgx (no ORM)", "DIY", "low (router only)"],
+          ["Echo", "Go", "goroutines", "GORM", "validator (plug-in)", "medium"],
+          ["Axum", "Rust", "Tokio", "SQLx / SeaORM", "serde + validator", "low-medium"],
+          ["Leptos", "Rust", "Tokio", "SQLx", "server-fn + types", "full-stack reactive"],
+          ["Drogon", "C++", "event-loop + coroutines", "built-in ORM", "DIY", "medium"],
+          ["Phoenix", "Elixir", "BEAM processes", "Ecto", "changesets", "high"],
+          ["Dart", "Dart", "event-loop + isolates", "Drift / Serverpod", "manual / DIY", "low-medium"],
+          ["Spring", "Java", "sync (+ virtual threads)", "Spring Data JPA", "Bean Validation", "very high"],
+          ["ASP.NET Core", "C#", "async (Task)", "EF Core", "Data Annotations", "very high"],
+          ["Rails", "Ruby", "sync (threads/fibers)", "Active Record (built-in)", "AR validations", "very high"],
+          ["Laravel", "PHP", "sync (+ queues)", "Eloquent (built-in)", "Form Requests", "very high"]
         ] },
         { type: "table", headers: ["Framework", "Signature feature to remember"], rows: [
           ["FastAPI", "`Depends` dependency injection + type-hint-driven validation"],
-          ["NestJS", "Request lifecycle: Guards → Interceptors → Pipes → Filters"],
-          ["Echo", "Handlers return `error` → central error handler; built-in middleware"],
-          ["chi", "Pure `net/http` composition; sub-routers + context values"],
-          ["Axum", "Extractors as typed handler args; Tower middleware layers"],
-          ["Elysia", "`t` schema = validation + types + docs; Eden typed client"],
-          ["Next.js", "File-based routing + Server Components + Server Actions"],
           ["Django", "Built-in ORM + auto admin + DRF for APIs"],
+          ["Flask", "Tiny core; app factory + blueprints; the app/request context"],
+          ["NestJS", "Request lifecycle: Guards → Interceptors → Pipes → Filters"],
+          ["ElysiaJS", "`t` schema = validation + types + docs; Eden typed client"],
+          ["Next.js", "File-based routing + Server Components + Server Actions"],
+          ["Go stdlib", "`net/http` + 1.22 ServeMux; middleware = handlers wrapping handlers"],
+          ["chi", "Pure `net/http` composition; sub-routers + context values"],
+          ["Echo", "Handlers return `error` → central error handler; built-in middleware"],
+          ["Axum", "Extractors as typed handler args; Tower middleware layers"],
+          ["Leptos", "Fine-grained signals + `#[server]` fns (one crate, two builds)"],
+          ["Anchor", "`#[derive(Accounts)]` constraints + PDAs on Solana"],
+          ["Qt", "Signals/slots + QObject parent-owns-child memory"],
+          ["Drogon", "Controller macros + filters/AOP; coroutine DB access"],
+          ["Phoenix", "OTP processes + LiveView; contexts + Ecto changesets"],
+          ["Dart", "Isolates for parallelism; Shelf / Dart Frog handlers"],
+          ["Spring", "IoC container + `@Transactional` proxies; Spring Data JPA"],
+          ["ASP.NET Core", "Middleware pipeline + DI lifetimes; EF Core `Include`"],
+          ["Rails", "Convention over config; Active Record + Hotwire"],
           ["Laravel", "Eloquent + Artisan codegen + route model binding"]
         ] }
       ]
@@ -77,7 +97,7 @@
         { type: "list", items: [
           "**Blog with auth + comments** — users, posts, nested comments, roles (author/admin). Exercises relations, authorization (guards/permissions), and response shaping.",
           "**E-commerce cart & orders** — products, cart, checkout → order with line items; stock decrement in a transaction. Great for DB transactions and state machines.",
-          "**Real-time chat** — rooms + messages over **WebSockets**; persist history. Tests the framework's async/streaming story (FastAPI WS, Elysia, Axum, Django Channels, Laravel Reverb).",
+          "**Real-time chat** — rooms + messages over **WebSockets**; persist history. Tests the framework's async/streaming story (FastAPI WS, Elysia, Axum, Django Channels, Laravel Reverb, Phoenix Channels/LiveView, Rails Action Cable, ASP.NET SignalR).",
           "**Job board** — companies post jobs, candidates apply; search + filters + pagination. Good for query building and full-text search.",
           "**Expense tracker** — transactions, categories, monthly aggregation reports. Exercises aggregation queries (`GROUP BY`, annotate).",
           "**Kanban board** — boards/columns/cards with drag-order; optimistic updates if you add a frontend. Ordering + reordering logic.",
@@ -126,7 +146,7 @@
       body: [
         { type: "link", url: "https://github.com/gothinkster/realworld", text: "RealWorld — the same 'Medium clone' app implemented in dozens of frameworks (great for side-by-side comparison)" },
         { type: "link", url: "https://roadmap.sh/backend", text: "roadmap.sh/backend — backend concepts checklist (auth, caching, scaling, messaging)" },
-        { type: "link", url: "https://12factor.net/", text: "The Twelve-Factor App — config, deploys, and stateelessness principles every backend should follow" },
+        { type: "link", url: "https://12factor.net/", text: "The Twelve-Factor App — config, deploys, and statelessness principles every backend should follow" },
         { type: "link", url: "https://github.com/golang-standards/project-layout", text: "golang-standards/project-layout — common Go project structure (relevant for Echo & chi)" }
       ]
     }
