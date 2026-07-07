@@ -32,7 +32,7 @@
     sql: new Set(KEYWORDS.sql.map(k=>k.toLowerCase()).concat(KEYWORDS.sql)),
   };
 
-  const HASH_COMMENT = new Set(["py","python","bash","sh","env","yaml","toml","ruby","dockerfile","http"]);
+  const HASH_COMMENT = new Set(["py","python","bash","sh","env","yaml","toml","ruby","elixir","dockerfile","http","properties"]);
   const esc = (s) => s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 
   function highlight(code, lang) {

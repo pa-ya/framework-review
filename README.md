@@ -12,9 +12,10 @@ ORMs, auth, and gotchas. Most sections are a 10–20 minute read (Qt is longer b
 - **Go** — Standard Library (net/http) · chi · Echo
 - **Rust** — Axum · Anchor (Solana on-chain programs) · Leptos (fullstack reactive)
 - **Laravel** (PHP)
+- **Others** — Elixir & Erlang (Phoenix) · Dart (backend) · Java Spring · ASP.NET Core · Ruby on Rails
 - **Practice & Projects** — cross-framework comparison + project ideas
 
-Related sections are grouped in the sidebar under a collapsible parent (**C++**, **Python**, **TypeScript**, **Go**, **Rust**). Every framework carries a **"Common headaches & how to handle them"** section covering its real-world pitfalls and the fix for each.
+Related sections are grouped in the sidebar under a collapsible parent (**C++**, **Python**, **TypeScript**, **Go**, **Rust**, **Others**). Every framework carries a **"Common headaches & how to handle them"** section covering its real-world pitfalls and the fix for each.
 
 ## Run it
 
