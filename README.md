@@ -15,11 +15,14 @@ ORMs, auth, and gotchas. Most sections are a 10–20 minute read (Qt is longer b
 - **Laravel** (PHP)
 - **Others** — Elixir & Erlang (Phoenix) · Dart (backend) · Java Spring · ASP.NET Core · Ruby on Rails
 - **Databases** — SQL (Postgres/MySQL/SQLite) · MongoDB · Neo4j · GraphQL · Comparison
+- **Shell scripting** — Bash (Linux/macOS) · Batch (Windows `cmd`)
 - **Practice & Projects** — cross-framework comparison + project ideas
 
-Related sections are grouped in the sidebar under a collapsible parent (**C++**, **Python**, **TypeScript**, **Go**, **Rust**, **Solana**, **Others**, **Databases**). Every framework carries a **"Common headaches & how to handle them"** section covering its real-world pitfalls and the fix for each.
+Related sections are grouped in the sidebar under a collapsible parent (**C++**, **Python**, **TypeScript**, **Go**, **Rust**, **Solana**, **Others**, **Databases**, **Shell scripting**). Every framework carries a **"Common headaches & how to handle them"** section covering its real-world pitfalls and the fix for each.
 
 > **Databases group** — a data-layer track that goes deep on **SQL** (relational, taught primarily on PostgreSQL with MySQL/SQLite differences — DDL/DML, joins, window functions, stored functions & triggers, transactions, big annotated queries), **MongoDB** (document), and **Neo4j** (graph/Cypher), plus **GraphQL** as the API query layer and a **Comparison** section on when to use which. Each is written to leave you fully hands-on with that database.
+
+> **Shell scripting group** — a two-part track for automating your machine from the command line: **Bash** (the Linux/macOS shell — CLI navigation, the grep/sed/awk text toolkit, pipes & redirection, variables & expansion, control flow, functions, and writing production-grade scripts with `set -euo pipefail`/`trap`/`getopts`, plus modern CLI tools like fzf/ripgrep/jq/fd worth installing) and **Batch** (Windows `cmd.exe` — variables & delayed expansion, `for /F` parsing, subroutines, error levels, and when to reach for PowerShell instead). Each ends with a ⚠️ **"famous destructive commands"** section — the fork bomb, `rm -rf /`, the batch folder bomb, etc. — flagged with danger callouts and meant for throwaway VMs only, never a real system.
 
 > **Solana group** — since Solana spans several languages, it gets its own group: the **Anchor** framework, **native Rust** (writing programs by hand), on-chain **C / C++**, **Go** and **TypeScript** for building clients and integration tests. Each language section also shows how to write a client for that language.
 
@@ -50,7 +53,7 @@ open index.html          # macOS
 - 🔗 **Copyable section links** — click a section's number to copy a deep link (`…#fastapi--routing`) that reopens straight to it.
 - ⌨ **Keyboard-shortcut overlay** — press `?` (or the `?` button) for the full list.
 - ▸ **Deep-dive accordions** — advanced details are collapsed by default; open only what you need.
-- 📋 Syntax-highlighted code (incl. SQL, Cypher, GraphQL) with **copy** buttons.
+- 📋 Syntax-highlighted code (incl. SQL, Cypher, GraphQL, Bash, Batch) with **copy** buttons.
 - 🖨 **Print-friendly** (Ctrl/Cmd+P expands everything for PDF export).
 
 ### Keyboard shortcuts
