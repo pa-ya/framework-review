@@ -8,6 +8,19 @@
 
   const CHECK_SVG = '<svg class="check" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
+  // Corner-arrow icon marking a nav item as a cross-link (shortcut) into another group.
+  const SHORTCUT_SVG = '<svg class="shortcut-ico" viewBox="0 0 24 24" width="12" height="12" fill="none" aria-hidden="true"><path d="M7 17L17 7M17 7H9M17 7v8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+  // Language groups get shortcut sub-items linking to the matching Solana sub-section,
+  // so e.g. a Solana/C++ program is discoverable from the C++ group (where people look for it).
+  const SHORTCUTS = {
+    "C++":        [{ id: "solana-cpp", label: "Solana · C / C++" }],
+    "Go":         [{ id: "solana-go", label: "Solana · Go" }],
+    "TypeScript": [{ id: "solana-ts", label: "Solana · TypeScript" }],
+    "Rust":       [{ id: "rust-anchor", label: "Solana · Anchor" },
+                   { id: "solana-native", label: "Solana · native Rust" }],
+  };
+
   function buildSidebar() {
     const nav = document.getElementById("nav");
     nav.innerHTML = "";
@@ -67,9 +80,28 @@
     const body = el("div", "nav-group-body");
     const inner = el("div", "nav-group-inner");
     members.forEach((m) => inner.appendChild(navSubItem(m)));
+    (SHORTCUTS[name] || []).forEach((sc) => {
+      // only render a shortcut if its target exists and isn't already a real member of this group
+      if (members.some((m) => m.id === sc.id)) return;
+      if ((window.FRAMEWORKS || []).some((f) => f.id === sc.id)) inner.appendChild(navShortcut(sc));
+    });
     body.appendChild(inner);
     wrap.appendChild(body);
     return wrap;
+  }
+
+  // A cross-link sub-item that jumps to a framework living in another group (e.g. Solana).
+  function navShortcut(sc) {
+    const fw = (window.FRAMEWORKS || []).find((f) => f.id === sc.id);
+    const item = el("div", "nav-item is-sub is-shortcut");
+    item.dataset.shortcut = sc.id;                 // NOT data-fw, so it stays out of active-state toggling
+    item.title = "Jump to " + (fw ? fw.name : sc.id) + " in the Solana section";
+    item.innerHTML =
+      `<span class="dot" style="background:${fw ? fw.color : "#9945FF"}"></span>` +
+      `<span class="nav-name">${sc.label}</span>` +
+      SHORTCUT_SVG;
+    item.addEventListener("click", () => { select(sc.id); closeMobileNav(); });
+    return item;
   }
 
   function navSubItem(fw) {
@@ -89,7 +121,7 @@
     if (!fw) return;
     current = id;
 
-    document.querySelectorAll(".nav-item").forEach((it) => it.classList.toggle("is-active", it.dataset.fw === id));
+    document.querySelectorAll(".nav-item").forEach((it) => it.classList.toggle("is-active", it.dataset.fw === id || it.dataset.shortcut === id));
 
     // keep the group containing the active item expanded
     const activeItem = document.querySelector('.nav-item[data-fw="' + id + '"]');

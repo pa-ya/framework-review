@@ -140,6 +140,18 @@
 .nav-item.is-sub { padding: 7px 10px; font-size: 13px; font-weight: 500; }
 .nav-item.is-sub .dot { width: 7px; height: 7px; }
 
+/* Shortcut sub-items: cross-links into another group (e.g. Solana). Visually lighter than
+   real items, with a corner-arrow to signal "this jumps elsewhere". */
+.nav-item.is-shortcut .nav-name { color: var(--text-3); font-weight: 450; }
+.nav-item.is-shortcut .dot { opacity: .55; box-shadow: none; }
+.nav-item.is-shortcut .shortcut-ico { flex: none; color: var(--text-3); opacity: .7; margin-left: 2px; }
+.nav-item.is-shortcut:hover { background: var(--surface); }
+.nav-item.is-shortcut:hover .nav-name,
+.nav-item.is-shortcut:hover .shortcut-ico { color: var(--accent); opacity: 1; }
+.nav-item.is-shortcut.is-active .nav-name { color: var(--text); }
+.nav-item.is-shortcut.is-active .shortcut-ico { color: var(--accent); opacity: 1; }
+.nav-item.is-shortcut.is-active .dot { opacity: 1; }
+
 .sidebar-foot { margin-top: auto; padding-top: var(--sp-3); border-top: 1px solid var(--border); }
 .deck-stats { font-size: 11px; line-height: 1.5; color: var(--muted); margin-bottom: var(--sp-2); letter-spacing: .01em; }
 .deck-stats b { color: var(--text); font-weight: 600; }
