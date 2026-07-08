@@ -6,8 +6,6 @@
 
   function el(tag, cls, html) { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
 
-  const CHECK_SVG = '<svg class="check" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-
   // Corner-arrow icon marking a nav item as a cross-link (shortcut) into another group.
   const SHORTCUT_SVG = '<svg class="shortcut-ico" viewBox="0 0 24 24" width="12" height="12" fill="none" aria-hidden="true"><path d="M7 17L17 7M17 7H9M17 7v8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
@@ -58,8 +56,7 @@
     item.innerHTML =
       `<span class="dot" style="background:${fw.color}"></span>` +
       `<span class="nav-name">${fw.name}</span>` +
-      (fw.language ? `<span class="nav-lang">${fw.language}</span>` : "") +
-      CHECK_SVG;
+      (fw.language ? `<span class="nav-lang">${fw.language}</span>` : "");
     item.addEventListener("click", () => { select(fw.id); closeMobileNav(); });
     return item;
   }
@@ -110,8 +107,7 @@
     const label = fw.navLabel || fw.name.replace(/^(Go|Rust|C\+\+)\s+/i, "");
     item.innerHTML =
       `<span class="dot" style="background:${fw.color}"></span>` +
-      `<span class="nav-name">${label}</span>` +
-      CHECK_SVG;
+      `<span class="nav-name">${label}</span>`;
     item.addEventListener("click", () => { select(fw.id); closeMobileNav(); });
     return item;
   }
@@ -145,7 +141,6 @@
     setTimeout(() => {
       const toc = window.Render.renderFramework(fw);
       buildTOC(toc);
-      window.Progress && window.Progress.refreshUI();
       setupScrollSpy();
       content.classList.remove("switching");
       window.scrollTo({ top: 0, behavior: "auto" });
