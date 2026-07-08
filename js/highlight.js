@@ -1,6 +1,6 @@
 /* ============================================================
    highlight.js — tiny dependency-free syntax highlighter
-   Supports: js, ts, py, go, rust, php, bash, json, sql, env, http
+   Supports: js, ts, py, go, rust, php, bash, json, sql, cypher, graphql, env, http
    ============================================================ */
 (function () {
   "use strict";
@@ -16,6 +16,8 @@
     bash: ["echo","cd","export","source","sudo","then","fi","do","done","in","function","local","if","else","elif","for","while","case","esac"],
     sql: ["SELECT","FROM","WHERE","INSERT","INTO","VALUES","UPDATE","SET","DELETE","CREATE","TABLE","ALTER","DROP","JOIN","LEFT","RIGHT","INNER","OUTER","ON","GROUP","BY","ORDER","LIMIT","OFFSET","AND","OR","NOT","NULL","PRIMARY","KEY","FOREIGN","REFERENCES","INDEX","DEFAULT","RETURNING","AS","DISTINCT","COUNT"],
     cpp: ["int","char","bool","void","float","double","long","short","unsigned","signed","struct","class","enum","union","namespace","using","template","typename","typedef","const","constexpr","static","inline","virtual","override","public","private","protected","friend","operator","new","delete","this","nullptr","true","false","auto","sizeof","return","if","else","for","while","do","switch","case","default","break","continue","goto","try","catch","throw","uint8_t","uint16_t","uint32_t","uint64_t","int8_t","int16_t","int32_t","int64_t","size_t"],
+    graphql: ["type","query","mutation","subscription","input","enum","interface","union","scalar","schema","fragment","on","implements","extend","directive","true","false","null","ID","Int","Float","String","Boolean"],
+    cypher: ["MATCH","OPTIONAL","WHERE","RETURN","CREATE","MERGE","DELETE","DETACH","SET","REMOVE","WITH","UNWIND","ORDER","BY","SKIP","LIMIT","AS","ON","DISTINCT","UNION","ALL","CALL","YIELD","FOREACH","CASE","WHEN","THEN","ELSE","END","AND","OR","XOR","NOT","IN","STARTS","ENDS","CONTAINS","IS","NULL","TRUE","FALSE","EXISTS","INDEX","CONSTRAINT","UNIQUE","REQUIRE","FOR","LOAD","CSV","HEADERS","USING","PERIODIC","COMMIT","ASC","DESC","DROP","SHOW","PROFILE","EXPLAIN","COUNT","COLLECT","node","relationship"],
   };
 
   const LANG_SET = {
@@ -35,6 +37,10 @@
     bash: new Set(KEYWORDS.bash),
     sh:  new Set(KEYWORDS.bash),
     sql: new Set(KEYWORDS.sql.map(k=>k.toLowerCase()).concat(KEYWORDS.sql)),
+    graphql: new Set(KEYWORDS.graphql),
+    gql: new Set(KEYWORDS.graphql),
+    cypher: new Set(KEYWORDS.cypher.map(k=>k.toLowerCase()).concat(KEYWORDS.cypher)),
+    cql: new Set(KEYWORDS.cypher.map(k=>k.toLowerCase()).concat(KEYWORDS.cypher)),
   };
 
   const HASH_COMMENT = new Set(["py","python","bash","sh","env","yaml","toml","ruby","elixir","dockerfile","http","properties","cmake","perl","r","makefile","gitignore"]);

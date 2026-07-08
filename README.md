@@ -14,9 +14,12 @@ ORMs, auth, and gotchas. Most sections are a 10–20 minute read (Qt is longer b
 - **Solana** — Anchor · Native Solana (Rust, no framework) · C / C++ · Go (clients) · TypeScript (clients + integration tests)
 - **Laravel** (PHP)
 - **Others** — Elixir & Erlang (Phoenix) · Dart (backend) · Java Spring · ASP.NET Core · Ruby on Rails
+- **Databases** — SQL (Postgres/MySQL/SQLite) · MongoDB · Neo4j · GraphQL · Comparison
 - **Practice & Projects** — cross-framework comparison + project ideas
 
-Related sections are grouped in the sidebar under a collapsible parent (**C++**, **Python**, **TypeScript**, **Go**, **Rust**, **Solana**, **Others**). Every framework carries a **"Common headaches & how to handle them"** section covering its real-world pitfalls and the fix for each.
+Related sections are grouped in the sidebar under a collapsible parent (**C++**, **Python**, **TypeScript**, **Go**, **Rust**, **Solana**, **Others**, **Databases**). Every framework carries a **"Common headaches & how to handle them"** section covering its real-world pitfalls and the fix for each.
+
+> **Databases group** — a data-layer track that goes deep on **SQL** (relational, taught primarily on PostgreSQL with MySQL/SQLite differences — DDL/DML, joins, window functions, stored functions & triggers, transactions, big annotated queries), **MongoDB** (document), and **Neo4j** (graph/Cypher), plus **GraphQL** as the API query layer and a **Comparison** section on when to use which. Each is written to leave you fully hands-on with that database.
 
 > **Solana group** — since Solana spans several languages, it gets its own group: the **Anchor** framework, **native Rust** (writing programs by hand), on-chain **C / C++**, **Go** and **TypeScript** for building clients and integration tests. Each language section also shows how to write a client for that language.
 
@@ -47,7 +50,7 @@ open index.html          # macOS
 - 🔗 **Copyable section links** — click a section's number to copy a deep link (`…#fastapi--routing`) that reopens straight to it.
 - ⌨ **Keyboard-shortcut overlay** — press `?` (or the `?` button) for the full list.
 - ▸ **Deep-dive accordions** — advanced details are collapsed by default; open only what you need.
-- 📋 Syntax-highlighted code with **copy** buttons.
+- 📋 Syntax-highlighted code (incl. SQL, Cypher, GraphQL) with **copy** buttons.
 - 🖨 **Print-friendly** (Ctrl/Cmd+P expands everything for PDF export).
 
 ### Keyboard shortcuts
