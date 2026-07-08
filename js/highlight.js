@@ -15,12 +15,17 @@
     php: ["function","public","private","protected","static","const","namespace","use","class","interface","trait","extends","implements","abstract","final","new","echo","print","fn","match","readonly","enum","array","null","true","false","self","parent","require","include"],
     bash: ["echo","cd","export","source","sudo","then","fi","do","done","in","function","local","if","else","elif","for","while","case","esac"],
     sql: ["SELECT","FROM","WHERE","INSERT","INTO","VALUES","UPDATE","SET","DELETE","CREATE","TABLE","ALTER","DROP","JOIN","LEFT","RIGHT","INNER","OUTER","ON","GROUP","BY","ORDER","LIMIT","OFFSET","AND","OR","NOT","NULL","PRIMARY","KEY","FOREIGN","REFERENCES","INDEX","DEFAULT","RETURNING","AS","DISTINCT","COUNT"],
+    cpp: ["int","char","bool","void","float","double","long","short","unsigned","signed","struct","class","enum","union","namespace","using","template","typename","typedef","const","constexpr","static","inline","virtual","override","public","private","protected","friend","operator","new","delete","this","nullptr","true","false","auto","sizeof","return","if","else","for","while","do","switch","case","default","break","continue","goto","try","catch","throw","uint8_t","uint16_t","uint32_t","uint64_t","int8_t","int16_t","int32_t","int64_t","size_t"],
   };
 
   const LANG_SET = {
     js:  new Set([...KEYWORDS.common, ...KEYWORDS.js]),
     ts:  new Set([...KEYWORDS.common, ...KEYWORDS.ts]),
+    typescript: new Set([...KEYWORDS.common, ...KEYWORDS.ts]),
     tsx: new Set([...KEYWORDS.common, ...KEYWORDS.ts]),
+    cpp: new Set(KEYWORDS.cpp),
+    c:   new Set(KEYWORDS.cpp),
+    "c++": new Set(KEYWORDS.cpp),
     py:  new Set([...KEYWORDS.py, "self","cls","print","str","int","float","dict","list","bool","tuple","set","range"]),
     python: new Set([...KEYWORDS.py, "self","cls"]),
     go:  new Set(KEYWORDS.go),

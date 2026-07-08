@@ -10,12 +10,15 @@ ORMs, auth, and gotchas. Most sections are a 10–20 minute read (Qt is longer b
 - **Python** — FastAPI · Django · Flask
 - **TypeScript** — NestJS · ElysiaJS (Bun) · Next.js
 - **Go** — Standard Library (net/http) · chi · Echo
-- **Rust** — Axum · Anchor (Solana on-chain programs) · Leptos (fullstack reactive)
+- **Rust** — Axum · Leptos (fullstack reactive)
+- **Solana** — Anchor · Native Solana (Rust, no framework) · C / C++ · Go (clients) · TypeScript (clients + integration tests)
 - **Laravel** (PHP)
 - **Others** — Elixir & Erlang (Phoenix) · Dart (backend) · Java Spring · ASP.NET Core · Ruby on Rails
 - **Practice & Projects** — cross-framework comparison + project ideas
 
-Related sections are grouped in the sidebar under a collapsible parent (**C++**, **Python**, **TypeScript**, **Go**, **Rust**, **Others**). Every framework carries a **"Common headaches & how to handle them"** section covering its real-world pitfalls and the fix for each.
+Related sections are grouped in the sidebar under a collapsible parent (**C++**, **Python**, **TypeScript**, **Go**, **Rust**, **Solana**, **Others**). Every framework carries a **"Common headaches & how to handle them"** section covering its real-world pitfalls and the fix for each.
+
+> **Solana group** — since Solana spans several languages, it gets its own group: the **Anchor** framework, **native Rust** (writing programs by hand), on-chain **C / C++**, **Go** and **TypeScript** for building clients and integration tests. Each language section also shows how to write a client for that language.
 
 ## Run it
 
