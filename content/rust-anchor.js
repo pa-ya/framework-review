@@ -4,8 +4,8 @@
   language: "Rust · Solana",
   tagline: "The **Rust framework for Solana on-chain programs** — macros that turn account validation, (de)serialization and IDL/client generation into boilerplate you don't write.",
   color: "#9945FF",
-  readMinutes: 23,
-  group: "Rust",
+  readMinutes: 25,
+  group: "Solana",
 
   sections: [
     {
@@ -204,12 +204,39 @@
     },
     {
       id: "testing",
-      title: "Testing",
+      title: "Integration tests (TypeScript)",
       level: "core",
       body: [
-        { type: "p", text: "`anchor test` boots a local validator, deploys your program, and runs the TS tests (Mocha + Chai by default). Since Anchor 1.0 the default backend is **Surfpool** (a fast in-process validator); pass `--validator legacy` to use the classic `solana-test-validator`. Tests exercise the program end-to-end through the real runtime." },
+        { type: "p", text: "`anchor test` builds, deploys, and runs your test suite end-to-end through the real runtime. Since **Anchor 1.0** the default backend is **Surfpool** (a fast in-process validator) — pass `--validator legacy` for the classic `solana-test-validator`. The default *test template* also changed to **LiteSVM** (Rust); to get the classic TypeScript/Mocha suite shown here, scaffold with `anchor init app --test-template mocha` (or add a `tests/*.ts` file and point `[scripts].test` at `ts-mocha`)." },
         { type: "code", lang: "typescript", code: "import * as anchor from \"@anchor-lang/core\";\nimport { assert } from \"chai\";\n\ndescribe(\"my_program\", () => {\n  anchor.setProvider(anchor.AnchorProvider.env());\n  const program = anchor.workspace.MyProgram;\n\n  it(\"initializes and deposits\", async () => {\n    const [vault] = anchor.web3.PublicKey.findProgramAddressSync(\n      [Buffer.from(\"vault\"), program.provider.publicKey.toBuffer()],\n      program.programId\n    );\n\n    await program.methods.initialize().accounts({ vault }).rpc();\n    await program.methods.deposit(new anchor.BN(500)).accounts({ vault }).rpc();\n\n    const state = await program.account.vault.fetch(vault);\n    assert.equal(state.amount.toNumber(), 500);\n  });\n\n  it(\"rejects a zero deposit\", async () => {\n    try {\n      await program.methods.deposit(new anchor.BN(0)).accounts({ /* ... */ }).rpc();\n      assert.fail(\"should have thrown\");\n    } catch (e) {\n      assert.include(e.error.errorMessage, \"greater than zero\");\n    }\n  });\n});" },
-        { type: "callout", variant: "tip", text: "`anchor test --skip-local-validator` runs against an already-running validator (faster iteration). For pure-Rust unit tests of program logic, the `litesvm` / `solana-program-test` crates run instructions without a full validator." }
+        { type: "callout", variant: "tip", text: "`anchor test --skip-local-validator` runs against an already-running validator (faster iteration). But for tight feedback loops, prefer the **Rust-side tests** below — they skip the deploy/redeploy cycle entirely." }
+      ]
+    },
+    {
+      id: "rust-tests",
+      title: "Rust tests: unit, LiteSVM & Mollusk",
+      level: "core",
+      body: [
+        { type: "p", text: "TypeScript tests exercise the deployed `.so` over RPC — great for end-to-end coverage, slow to iterate on. For fast, focused tests you write **in Rust** and run with `cargo test`. There are three layers, cheapest first." },
+        { type: "heading", text: "1. Pure-logic unit tests (no runtime)" },
+        { type: "p", text: "Factor business logic out of the handler into plain functions and test them with an ordinary `#[cfg(test)]` module. No validator, no accounts — millisecond `cargo test` runs. This is where the bulk of your math/validation belongs." },
+        { type: "code", lang: "rust", code: "pub fn apply_fee(amount: u64, bps: u16) -> Result<u64> {\n    let fee = (amount as u128)\n        .checked_mul(bps as u128).ok_or(MyError::Overflow)?\n        / 10_000;\n    amount.checked_sub(fee as u64).ok_or(MyError::Overflow.into())\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn takes_one_percent() {\n        assert_eq!(apply_fee(10_000, 100).unwrap(), 9_900);\n    }\n\n    #[test]\n    fn rejects_overflow() {\n        assert!(apply_fee(u64::MAX, 10_000).is_err());\n    }\n}" },
+        { type: "callout", variant: "tip", text: "Run these with a plain `cargo test` (host target) — instant, and they don't need the SBF toolchain. Keep handlers thin (`ctx.accounts` in, call a pure fn, write result out) so most logic is testable this way." },
+        { type: "heading", text: "2. LiteSVM — the default Anchor 1.0 test template" },
+        { type: "p", text: "`litesvm` is a fast **in-process Solana VM**: it loads your compiled program and executes real transactions without spinning up a validator (10–100× faster than `solana-test-validator`). Since Anchor 1.0 it's the default template from `anchor init`. You still build the program first (`cargo build-sbf`), then drive it from a Rust integration test." },
+        { type: "code", lang: "rust", code: "use litesvm::LiteSVM;\nuse solana_sdk::{signature::Keypair, signer::Signer, transaction::Transaction};\n\n#[test]\nfn initializes_counter() {\n    let mut svm = LiteSVM::new();\n    let program_id = my_program::ID;\n    svm.add_program_from_file(program_id, \"target/deploy/my_program.so\").unwrap();\n\n    let payer = Keypair::new();\n    svm.airdrop(&payer.pubkey(), 1_000_000_000).unwrap();\n\n    // Build the instruction with Anchor's generated client types, then:\n    let tx = Transaction::new_signed_with_payer(\n        &[/* instruction */],\n        Some(&payer.pubkey()),\n        &[&payer],\n        svm.latest_blockhash(),\n    );\n    let result = svm.send_transaction(tx);\n    assert!(result.is_ok());\n\n    // Read the account back and assert on its deserialized state\n    let acct = svm.get_account(&counter_pda).unwrap();\n    let state = Counter::try_deserialize(&mut acct.data.as_ref()).unwrap();\n    assert_eq!(state.count, 0);\n}" },
+        { type: "heading", text: "3. Mollusk — isolated instruction harness" },
+        { type: "p", text: "`mollusk-svm` runs a **single instruction** against a set of input accounts and checks the resulting accounts — no transactions, no fees, no blockhash. It's the leanest way to unit-test one handler (including **compute-unit** budgeting and benchmarking) and pairs well with fuzzing." },
+        { type: "code", lang: "rust", code: "use mollusk_svm::{Mollusk, result::Check};\n\n#[test]\nfn deposit_increments_balance() {\n    let mollusk = Mollusk::new(&my_program::ID, \"target/deploy/my_program\");\n\n    mollusk.process_and_validate_instruction(\n        &deposit_ix,                       // the Instruction under test\n        &[(vault_pubkey, vault_account),   // (pubkey, Account) inputs\n          (user_pubkey, user_account)],\n        &[Check::success(),                // assert it succeeded\n          Check::compute_units(4_000),     // budget guard\n          Check::account(&vault_pubkey).data(&expected_bytes).build()],\n    );\n}" },
+        { type: "heading", text: "Choosing a template & running" },
+        { type: "table", headers: ["Layer", "Speed", "Use for", "Run with"], rows: [
+          ["`#[cfg(test)]` unit", "instant", "math, validation, pure logic", "`cargo test`"],
+          ["Mollusk", "very fast", "one instruction, CU budgets, fuzzing", "`cargo test-sbf`"],
+          ["LiteSVM", "fast", "multi-instruction flows, PDAs, CPIs", "`cargo test-sbf`"],
+          ["TS / Mocha", "slow", "end-to-end client + IDL round-trip", "`anchor test`"]
+        ] },
+        { type: "code", lang: "bash", code: "# scaffold with a chosen Rust test template:\nanchor init app --test-template litesvm   # default in Anchor 1.0\nanchor init app --test-template mollusk\nanchor init app --test-template mocha      # classic TypeScript suite\n\n# build the program, then run the Rust tests:\ncargo build-sbf                # compile program -> target/deploy/*.so\ncargo test-sbf                 # build-sbf + run #[test]s (LiteSVM/Mollusk)\ncargo test                     # pure host-side unit tests only (fast)\n\nanchor test                    # full flow: build + deploy + whichever suite" },
+        { type: "callout", variant: "gotcha", text: "LiteSVM/Mollusk tests load the compiled `.so`, so a **stale build fails silently against old logic**. Always `cargo build-sbf` (or `cargo test-sbf`, which does it for you) after changing the program — a plain `cargo test` won't rebuild the SBF binary those tests load." }
       ]
     },
     {
@@ -281,7 +308,9 @@
     { name: "@solana/web3.js", why: "Connection, PublicKey, keypairs, transactions (JS)" },
     { name: "avm", why: "Anchor Version Manager — install/pin Anchor CLI versions" },
     { name: "solana-cli (Anza)", why: "keygen, airdrop, config, solana-test-validator, program deploy" },
-    { name: "litesvm / solana-program-test", why: "fast Rust-side testing without a full validator" }
+    { name: "litesvm", why: "fast in-process SVM for Rust integration tests (Anchor 1.0 default template)" },
+    { name: "mollusk-svm", why: "single-instruction test harness + compute-unit benchmarking / fuzzing" },
+    { name: "solana-program-test", why: "older BanksClient-based program test framework" }
   ],
 
   gotchas: [
@@ -310,7 +339,9 @@
     { q: "Where do Anchor custom error codes start, and how do you raise them?", a: "At **6000** (below that is reserved). Define with `#[error_code]`, raise with `require!(cond, MyError::X)` or `err!(MyError::X)`." },
     { q: "What is the IDL and what does it enable?", a: "A JSON interface description generated by `anchor build`; the `@anchor-lang/core` TS client reads it to call instructions by name with types and auto-deserialize accounts." },
     { q: "Why is an account 'stale' after a CPI, and how do you fix it?", a: "Your deserialized copy in `ctx.accounts` isn't automatically refreshed when a CPI mutates the on-chain account. Call `ctx.accounts.x.reload()?` before reading the post-CPI value." },
-    { q: "Why `Box` an Anchor account, and what limits force it?", a: "The BPF stack frame is only ~4KB; a large `Account<T>` on the stack overflows it. `Box<Account<T>>` moves it to the heap. Also mind ~200k compute units and the ~1232-byte transaction size." }
+    { q: "Why `Box` an Anchor account, and what limits force it?", a: "The BPF stack frame is only ~4KB; a large `Account<T>` on the stack overflows it. `Box<Account<T>>` moves it to the heap. Also mind ~200k compute units and the ~1232-byte transaction size." },
+    { q: "What are the layers of Anchor testing, fastest to slowest?", a: "(1) `#[cfg(test)]` unit tests of pure logic via `cargo test`; (2) **Mollusk** — one instruction, CU budgets; (3) **LiteSVM** — in-process VM, multi-instruction flows (the Anchor 1.0 default template); (4) TypeScript/Mocha end-to-end via `anchor test`. Run Rust SVM tests with `cargo test-sbf`." },
+    { q: "Why can a LiteSVM/Mollusk test pass against stale logic?", a: "They load the compiled `target/deploy/*.so`, not your source. If you forget to rebuild, the test runs old bytecode. Always `cargo build-sbf` / `cargo test-sbf` after changing the program." }
   ],
 
   cheatsheet: [
